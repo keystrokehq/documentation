@@ -1,0 +1,285 @@
+---
+title: "Triggers: Webhook, Cron, and Poll Event Sources"
+sidebarTitle: "Triggers"
+description: "Triggers connect external events to your workflows and agents. Choose from webhook, cron, and poll sources — each attaches to any workflow or agent."
+---
+
+Triggers are event sources that start your workflows and agents automatically. Rather than calling `POST /workflows/{slug}` yourself, you define a trigger that listens for an external event — an incoming HTTP request, a scheduled time, or a polled data source — and fires your workflow or agent whenever that event occurs. All orchestration logic stays in the workflow or agent; the trigger is only responsible for deciding _when_ to fire and _what data_ to pass.
+
+## Trigger types
+
+<Tabs>
+  <Tab title="Webhook">
+    A webhook trigger fires whenever a `POST` request hits `POST /triggers/{endpoint}`. You define a Zod `request` schema to validate and parse the incoming payload, and an optional `filter` to skip payloads that don't match.
+
+    ```typescript
+    import { defineWebhookSource } from "@keystrokehq/keystroke/trigger";
+    import { z } from "zod";
+    import workflow from "../workflows/incoming-message";
+
+    const IncomingMessageSchema = z.object({
+      text: z.string().trim().min(1),
+      from: z.string().optional(),
+    });
+
+    export default defineWebhookSource({
+      key: "incoming-message",
+      endpoint: "incoming-message",
+      request: IncomingMessageSchema,
+    }).attach({
+      workflow,
+      transform: (payload) => {
+        const parsed = payload as z.infer<typeof IncomingMessageSchema>;
+        return {
+          message: parsed.text,
+          sender: parsed.from ?? "anonymous",
+        };
+      },
+    });
+    ```
+
+    **Parameters for `defineWebhookSource`:**
+
+    <ParamField path="key" type="string" required>
+      Unique identifier for this trigger source. Used to build the attachment key (`{triggerKey}:{workflowKey}`).
+    </ParamField>
+
+    <ParamField path="endpoint" type="string" required>
+      The URL segment that this trigger listens on: `POST /triggers/{endpoint}`. Multiple triggers can share the same `endpoint` value — see [Shared endpoints](#shared-endpoints) below.
+    </ParamField>
+
+    <ParamField path="request" type="ZodType">
+      A Zod schema that validates the incoming request body. Requests that fail validation are rejected with `400`. Omit to accept any payload.
+    </ParamField>
+
+    <ParamField path="filter" type="ZodType | (payload) => boolean">
+      An additional filter applied after `request` parsing. Pass a Zod schema to match on shape, or a function that returns `true` to fire and `false` to skip. When the filter returns `false`, the endpoint responds with `{ ok: true, skipped: true }`.
+    </ParamField>
+  </Tab>
+
+  <Tab title="Cron">
+    A cron trigger fires on a schedule using standard cron syntax. Use it to run a workflow or invoke an agent at regular intervals — daily reports, cleanup jobs, or scheduled digests.
+
+    ```typescript
+    import { defineCronSource } from "@keystrokehq/keystroke/trigger";
+    import support from "../agents/support";
+    import { morningCheckPrompt } from "../lib/morning-check";
+
+    export default defineCronSource({
+      key: "morning-check",
+      schedule: "0 9 * * *",
+    }).attach({
+      agent: support,
+      prompt: () => morningCheckPrompt(),
+    });
+    ```
+
+    **Parameters for `defineCronSource`:**
+
+    <ParamField path="key" type="string" required>
+      Unique identifier for this trigger source.
+    </ParamField>
+
+    <ParamField path="schedule" type="string" required>
+      A standard cron expression (five fields). Examples: `"0 9 * * *"` (daily at 09:00), `"*/15 * * * *"` (every 15 minutes).
+    </ParamField>
+  </Tab>
+
+  <Tab title="Poll">
+    A poll trigger runs your `run()` function on a cron schedule and passes its output to the attached workflow or agent — but only when your `filter` returns `true`. Use it to periodically check an external API and fire only when there is new data to process.
+
+    ```typescript
+    import { definePollSource } from "@keystrokehq/keystroke/trigger";
+    import support from "../agents/support";
+
+    type InboxResult = {
+      emails: Array<{ subject: string; from: string }>;
+    };
+
+    function newInboxPrompt(result: InboxResult): string {
+      const latest = result.emails[0]!;
+      return `Summarize this inbox item in one short sentence.\nFrom: ${latest.from}\nSubject: ${latest.subject}`;
+    }
+
+    export default definePollSource({
+      key: "new-inbox",
+      schedule: "*/5 * * * *",
+      run: (): InboxResult => ({
+        emails: [{ subject: "Hello", from: "alice@example.com" }],
+      }),
+      filter: (result) => (result as InboxResult).emails.length > 0,
+    }).attach({
+      agent: support,
+      prompt: (result) => newInboxPrompt(result as InboxResult),
+    });
+    ```
+
+    **Parameters for `definePollSource`:**
+
+    <ParamField path="key" type="string" required>
+      Unique identifier for this trigger source.
+    </ParamField>
+
+    <ParamField path="schedule" type="string" required>
+      A cron expression controlling how often the poll `run` function is called.
+    </ParamField>
+
+    <ParamField path="run" type="() => any" required>
+      The polling function. Called on every tick of `schedule`. Its return value is passed to `filter` and, if the filter passes, forwarded to the attached workflow or agent via `transform`.
+    </ParamField>
+
+    <ParamField path="filter" type="(result) => boolean">
+      Decides whether to fire the attached workflow. Return `true` to fire, `false` to skip. When omitted, every non-null result fires. Returning `null` or `undefined` from `run` also skips the attachment.
+    </ParamField>
+  </Tab>
+</Tabs>
+
+---
+
+## Attaching triggers to workflows and agents
+
+Every trigger source must be attached to a workflow or agent using `.attach()`. This is what tells Keystroke where to route the event when the trigger fires.
+
+<ParamField path="workflow" type="WorkflowDefinition">
+  The workflow to invoke. The trigger's payload (after `transform`) must match the workflow's `input` schema.
+</ParamField>
+
+<ParamField path="agent" type="Agent">
+  The agent to invoke. Used with `prompt` instead of `transform`.
+</ParamField>
+
+<ParamField path="transform" type="(payload) => workflowInput">
+  A function that reshapes the trigger payload into the workflow's `input` shape. Required when the raw payload doesn't match the workflow input schema directly.
+</ParamField>
+
+<ParamField path="prompt" type="(payload) => string">
+  For agent attachments: a function that converts the trigger payload into a prompt string passed to `agent.prompt()`.
+</ParamField>
+
+Export the result of `.attach()` as the default export from your trigger file so the server can discover it:
+
+```typescript
+export default defineWebhookSource({ ... }).attach({ workflow, transform });
+```
+
+---
+
+## HTTP endpoints
+
+<CardGroup cols={2}>
+  <Card title="POST /triggers/{endpoint}" icon="webhook">
+    Fire a webhook trigger manually or from an external system. The request body is validated against the trigger's `request` schema.
+  </Card>
+  <Card title="POST /triggers/{key}/poll" icon="arrows-rotate">
+    Manually trigger a poll source on demand, outside of its cron schedule. Useful for testing or backfill scenarios.
+  </Card>
+</CardGroup>
+
+---
+
+## Shared endpoints
+
+Multiple triggers can share the same HTTP endpoint by setting the same `endpoint` value. Each trigger applies its own `request` schema and `filter` — the first trigger whose filter passes wins.
+
+```typescript
+// shared-hub-alpha.ts
+export default defineWebhookSource({
+  key: "shared-hub-alpha",
+  endpoint: "shared-hub",          // shared endpoint
+  request: z.object({
+    branch: z.literal("alpha"),
+    value: z.string(),
+  }),
+  filter: z.object({
+    value: z.string().startsWith(SHARED_HUB_ALPHA_VALUE_PREFIX),
+  }),
+}).attach({
+  workflow: alphaWorkflow,
+  transform: (payload) => ({
+    value: (payload as { value: string }).value.toUpperCase(),
+  }),
+});
+
+// shared-hub-beta.ts
+export default defineWebhookSource({
+  key: "shared-hub-beta",
+  endpoint: "shared-hub",          // same endpoint
+  request: z.object({
+    branch: z.literal("beta"),
+    value: z.string(),
+  }),
+  filter: z.object({
+    value: z.string().regex(/^\s*beta-/),
+  }),
+}).attach({
+  workflow: betaWorkflow,
+  transform: (payload) => ({
+    value: (payload as { value: string }).value.trim(),
+  }),
+});
+```
+
+Both triggers listen on `POST /triggers/shared-hub`. The server evaluates each trigger's filter in the order they are registered and fires the first matching attachment.
+
+---
+
+## Payload filtering
+
+The `filter` option lets you skip payloads that don't need processing without returning an error to the caller.
+
+**Filter as a Zod schema** — the payload must match the schema shape for the trigger to fire:
+
+```typescript
+defineWebhookSource({
+  key: "my-trigger",
+  endpoint: "my-trigger",
+  request: z.object({ event: z.string(), value: z.string() }),
+  filter: z.object({
+    event: z.literal("order.created"),
+  }),
+})
+```
+
+**Filter as a function** — return `true` to fire, `false` to skip:
+
+```typescript
+defineWebhookSource({
+  key: "my-trigger",
+  endpoint: "my-trigger",
+  request: z.object({ score: z.number() }),
+  filter: (payload) => (payload as { score: number }).score > 0.8,
+})
+```
+
+When a filter skips a request, the server responds with:
+
+```json
+{ "ok": true, "skipped": true }
+```
+
+This tells the caller that the webhook was received and processed — there simply was no work to do.
+
+---
+
+## Transforming payloads
+
+Use the `transform` option on `.attach()` to reshape the trigger payload before it is passed to the workflow. This keeps the workflow's input schema stable regardless of the shape of the external event:
+
+```typescript
+defineWebhookSource({
+  key: "incoming-message",
+  endpoint: "incoming-message",
+  request: z.object({ text: z.string(), from: z.string().optional() }),
+}).attach({
+  workflow,
+  transform: (payload) => ({
+    message: (payload as { text: string }).text,
+    sender: (payload as { from?: string }).from ?? "anonymous",
+    channel: "chat" as const,
+  }),
+});
+```
+
+<Tip>
+  Keep orchestration logic out of trigger files. The trigger's job is to filter, validate, and reshape the incoming event. All decision-making and branching belongs in the workflow `run` function.
+</Tip>

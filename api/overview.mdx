@@ -1,0 +1,111 @@
+---
+title: "Keystroke HTTP API: Agents, Workflows, and Triggers"
+sidebarTitle: "Overview"
+description: "The Keystroke server exposes HTTP endpoints for every agent, workflow, and trigger in your project. Routes are auto-generated from your source files."
+---
+
+The Keystroke server is an HTTP API that wires your agents, workflows, and triggers to live endpoints — no routing code required. When you run `keystroke dev` or `keystroke start`, the server walks your `src/agents/`, `src/workflows/`, and `src/triggers/` directories, builds a route manifest from the files it finds, and mounts a corresponding set of HTTP routes. Add a new agent file and restart; the endpoint appears automatically.
+
+## Base URL
+
+During local development the server listens on port `3001` by default:
+
+```
+http://localhost:3001
+```
+
+When you deploy, replace this with your server's public URL. All paths below are relative to this base.
+
+## Auto-generated routes
+
+Every source file in the discovery directories produces one or more HTTP endpoints. The table below shows the canonical pattern for each resource type.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/agents/{slug}` | Prompt an agent and receive its reply |
+| `GET` | `/agents/{slug}/sessions` | List sessions for an agent |
+| `GET` | `/agents/{slug}/sessions/{sessionId}` | Get session detail and message history |
+| `POST` | `/workflows/{slug}` | Run a workflow with the given input |
+| `GET` | `/workflows/{slug}/runs` | List recent runs for a workflow |
+| `GET` | `/workflows/{slug}/runs/{runId}` | Get run status and output |
+| `POST` | `/triggers/{key}` | Fire a webhook trigger |
+| `POST` | `/triggers/{key}/poll` | Fire a poll trigger on demand |
+| `GET` | `/triggers/{attachmentKey}/runs` | List runs for a trigger attachment |
+| `GET` | `/triggers/{attachmentKey}/runs/{runId}` | Get trigger run detail |
+| `GET` | `/openapi.json` | Fetch the live OpenAPI spec for your project |
+
+Nested source files follow the same pattern — `src/agents/sales/agent.ts` maps to `POST /agents/sales`, and `src/workflows/support/inbox/workflow.ts` maps to `POST /workflows/support/inbox`.
+
+## Authentication
+
+On a locally running dev server, requests are unauthenticated by default. For deployed servers you can protect endpoints with a bearer token or an API key header.
+
+| Header | Format | When to use |
+|--------|--------|-------------|
+| `Authorization` | `Bearer <token>` | Standard OAuth2 / JWT flows |
+| `x-api-key` | `<key>` | Simpler server-to-server integrations |
+
+Both headers are checked on every protected route. If neither is present and the route requires authentication, the server returns `401`.
+
+## Request and response formats
+
+Most endpoints accept `application/json`. Agent endpoints additionally accept `text/plain` — the plain-text body becomes the `message` field. All successful responses are JSON unless otherwise noted.
+
+```bash
+# JSON body
+curl -X POST http://localhost:3001/agents/support \
+  -H 'content-type: application/json' \
+  -d '{"message": "Hello"}'
+
+# Plain text body (agents only)
+curl -X POST http://localhost:3001/agents/support \
+  -H 'content-type: text/plain' \
+  -d 'Hello'
+```
+
+## Inline vs. queued execution
+
+The server can execute a run inline (blocking) or enqueue it for background processing. In `keystroke dev`, runs are typically queued; integration test mode uses inline execution.
+
+| Status | Meaning | Response shape |
+|--------|---------|----------------|
+| `200` | Inline result — the run completed synchronously | Resource-specific output (e.g. agent reply, workflow output) |
+| `202` | Queued — the run was accepted and will execute in the background | `{ "sessionId": "…" }` for agents; `{ "runId": "…" }` for workflows and triggers |
+
+When you receive a `202`, use the returned `runId` or `sessionId` to poll the matching `/runs/{runId}` or `/sessions/{sessionId}` endpoint for the final result.
+
+## Error format
+
+All error responses share the same JSON shape. The `code` field is a machine-readable string you can use to branch in client code.
+
+```json
+{
+  "error": "Invalid workflow input",
+  "code": "VALIDATION_ERROR"
+}
+```
+
+Common status codes:
+
+| Code | Meaning |
+|------|---------|
+| `400` | Bad request — invalid body, missing required field, or failed schema validation |
+| `401` | Unauthenticated — no valid token or API key was provided |
+| `403` | Forbidden — the credential or resource does not belong to the caller |
+| `404` | Not found — the agent, workflow, or run does not exist |
+| `409` | Conflict — e.g. session belongs to a different agent |
+| `503` | Service unavailable — the agent or workflow is not yet registered |
+
+## OpenAPI spec
+
+`GET /openapi.json` returns a live OpenAPI 3.0 document that describes every auto-discovered route in your project, including Zod-derived request and response schemas. It requires no authentication.
+
+```bash
+curl -s http://localhost:3001/openapi.json | jq '.paths | keys'
+```
+
+The spec also carries Keystroke-specific extensions under the `x-keystroke` key — a list of discovered modules with their source files and kind (`agent`, `workflow`, `trigger`), active cron/poll schedules, and discovery conventions. See [OpenAPI](/api/openapi) for full details.
+
+<Note>
+  The spec is regenerated from your source files each time the server starts. If you add or rename an agent, restart the server and fetch `/openapi.json` again to get the updated document.
+</Note>

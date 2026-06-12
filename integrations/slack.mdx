@@ -1,0 +1,236 @@
+---
+title: "Slack Integration: Agents in Slack Channels"
+sidebarTitle: "Slack"
+description: "Connect Keystroke agents to Slack with OAuth. Respond to mentions, post messages, list channels, and run agents directly from Slack conversations."
+---
+
+The Slack integration turns any Keystroke agent into a Slack bot. Once installed, your server handles the full OAuth app lifecycle — workspace installs, token storage, and signature verification — and exposes four typed actions (`postMessage`, `listMessages`, `lookupUser`, `openDm`) that any agent or workflow can call directly. The gateway layer listens for Slack events and automatically routes `@mention`s to the agent bound to that channel.
+
+## Setup
+
+<Steps>
+  <Step title="Install the package">
+    Add `@keystrokehq/slack` to your project:
+
+    ```bash
+    pnpm add @keystrokehq/slack
+    ```
+  </Step>
+
+  <Step title="Register the integration">
+    Import `slack` and add it to the `integrations` array in `keystroke.config.ts`:
+
+    ```ts keystroke.config.ts
+    import { defineConfig } from "@keystrokehq/keystroke/config";
+    import { slack } from "@keystrokehq/slack";
+
+    export default defineConfig({
+      integrations: [slack()],
+    });
+    ```
+
+    This mounts all OAuth routes and the Slack events webhook automatically.
+  </Step>
+
+  <Step title="Create a Slack app">
+    Go to [api.slack.com/apps](https://api.slack.com/apps) and create a new app. You'll need three values from the app's **Basic Information** and **OAuth & Permissions** pages.
+
+    Set the following environment variables before starting your server:
+
+    ```bash .env
+    SLACK_CLIENT_ID=your-client-id
+    SLACK_CLIENT_SECRET=your-client-secret
+    SLACK_SIGNING_SECRET=your-signing-secret
+    ```
+
+    On startup, Keystroke seeds these values into the credential vault (insert-only). The server reads tokens from the database at runtime, so you only need these variables to bootstrap a new environment.
+
+    <Tip>
+      To seed a workspace connection immediately without going through the OAuth UI, set `SLACK_BOT_TOKEN` as well. Keystroke will call `auth.test` and store the workspace credential automatically.
+    </Tip>
+  </Step>
+
+  <Step title="Configure the redirect URI">
+    In your Slack app under **OAuth & Permissions**, add the following redirect URL:
+
+    ```
+    {PUBLIC_SERVER_URL}/oauth/slack/callback
+    ```
+  </Step>
+
+  <Step title="Configure the Events URL">
+    In your Slack app under **Event Subscriptions**, set the Request URL to:
+
+    ```
+    {PUBLIC_SERVER_URL}/gateways/slack
+    ```
+
+    Enable the `app_mention` event (and any other message events your gateway needs) and save your changes. Slack will verify the endpoint using the signing secret you set above.
+  </Step>
+
+  <Step title="Connect a workspace">
+    With your server running, authenticate and connect:
+
+    ```bash
+    keystroke auth login
+    keystroke connect slack
+    ```
+
+    Alternatively, open `GET /oauth/slack/authorize-url` in a browser with an authenticated session to retrieve the authorization URL directly.
+  </Step>
+</Steps>
+
+## OAuth routes
+
+Once registered, the following routes are available on your server:
+
+| Route | Purpose |
+|-------|---------|
+| `GET /oauth/slack` | Start the OAuth flow (requires an authenticated session) |
+| `GET /oauth/slack/authorize-url` | Return the authorization URL as JSON (for the CLI) |
+| `GET /oauth/slack/callback` | Handle the OAuth callback from Slack |
+| `POST /gateways/slack` | Receive Slack event payloads |
+
+## Available actions
+
+Import actions from `@keystrokehq/slack/actions` and add them to any agent's or workflow's `tools` array. All four actions resolve the workspace bot token from the credential vault automatically — you never pass tokens manually.
+
+### postMessage
+
+Posts a message to a Slack channel or DM.
+
+<ParamField body="channel" type="string" required>
+  The channel or DM ID to post to (e.g. `C01234ABCDE` or `D01234ABCDE`).
+</ParamField>
+
+<ParamField body="text" type="string" required>
+  The message text to send.
+</ParamField>
+
+<ParamField body="threadTs" type="string">
+  The `ts` of a parent message to post as a threaded reply.
+</ParamField>
+
+Returns `{ channel: string, ts: string }`.
+
+### listMessages
+
+Lists recent messages from a Slack channel or DM.
+
+<ParamField body="channel" type="string" required>
+  The channel or DM ID to read history from.
+</ParamField>
+
+<ParamField body="limit" type="number">
+  Number of messages to return. Defaults to `20`, maximum `100`.
+</ParamField>
+
+<ParamField body="oldest" type="string">
+  Unix timestamp — only return messages after this time (inclusive).
+</ParamField>
+
+<ParamField body="latest" type="string">
+  Unix timestamp — only return messages before this time (exclusive).
+</ParamField>
+
+Returns `{ messages: Array<{ ts, user, text, threadTs? }> }`.
+
+### lookupUser
+
+Resolves a Slack user by their user ID or workspace email. Provide exactly one of `userId` or `email`.
+
+<ParamField body="userId" type="string">
+  A Slack user ID starting with `U`.
+</ParamField>
+
+<ParamField body="email" type="string">
+  A workspace email address.
+</ParamField>
+
+Returns `{ id, name, realName, email, isBot }`.
+
+### openDm
+
+Opens (or resumes) a direct message channel with a user. Returns the DM channel ID, which you can then pass to `postMessage`.
+
+<ParamField body="userId" type="string" required>
+  The Slack user ID to open a DM with.
+</ParamField>
+
+Returns `{ channelId: string }`.
+
+## Code example
+
+The following workflow uses the Slack integration to research a new signup lead and post a brief directly to a pipeline channel. It combines two Keystroke primitives: the `researchSignup` action (which calls an AI agent) and the `postMessage` action from `@keystrokehq/slack/actions`.
+
+```ts src/workflows/signup-pipeline.ts
+import { postMessage } from "@keystrokehq/slack/actions";
+import { defineWorkflow } from "@keystrokehq/keystroke/workflow";
+import { z } from "zod";
+import { researchSignup } from "../actions/research-signup";
+import { SLACK_PIPELINE_CHANNEL, signupBriefMessage } from "../lib/signup";
+
+const Input = z.object({
+  name: z.string(),
+  email: z.string().email(),
+  company: z.string(),
+});
+
+const Output = z.object({
+  brief: z.string(),
+  channel: z.string(),
+  ts: z.string(),
+});
+
+export default defineWorkflow({
+  slug: "signup-pipeline",
+  description: "Research a signup lead and post a brief to the pipeline Slack channel.",
+  input: Input,
+  output: Output,
+  async run(input) {
+    const { brief } = await researchSignup.run(input);
+    const posted = await postMessage.run({
+      channel: SLACK_PIPELINE_CHANNEL,
+      text: signupBriefMessage({ ...input, brief }),
+    });
+
+    return { brief, ...posted };
+  },
+});
+```
+
+You can also add Slack actions directly to an agent's tools so the model can decide when to post:
+
+```ts src/agents/notifier.ts
+import { defineAgent } from "@keystrokehq/keystroke/agent";
+import { listMessages, lookupUser, openDm, postMessage } from "@keystrokehq/slack/actions";
+
+export default defineAgent({
+  slug: "notifier",
+  systemPrompt: "You are a Slack assistant. Post updates and answer questions from Slack.",
+  model: "openai/gpt-4o",
+  tools: [postMessage, listMessages, lookupUser, openDm],
+});
+```
+
+## Gateway: responding to @mentions
+
+The Slack gateway maps channels to agents. When someone mentions your bot in a channel, Keystroke looks up the agent bound to that channel and runs it with the message as input, then posts the agent's reply back in the same thread.
+
+You manage channel-to-agent bindings through the REST API:
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/gateways/slack/attachments` | List all channel bindings |
+| `PUT` | `/gateways/slack/attachments/:channelId` | Bind an agent to a channel: `{ "agentKey": "notifier" }` |
+| `DELETE` | `/gateways/slack/attachments/:channelId` | Remove a channel binding |
+
+If a message arrives in a channel with no binding, Slack users receive an ephemeral link to a setup page where they can attach an agent to that channel.
+
+<Note>
+  The bot token from the OAuth install is resolved at **organization scope**, meaning all users in a workspace share the same bot connection. If you need per-user tokens — for example, to post on behalf of a specific user — you can store additional OAuth connections and resolve them by user ID in your workflow logic.
+</Note>
+
+## Gateway reply behavior
+
+Gateway replies are posted back to Slack using `chat:write.customize`, which lets Keystroke post under the agent's configured name and avatar rather than the bot's default display name. Older installs that predate this scope fall back to the bot name automatically.

@@ -1,0 +1,155 @@
+---
+title: "Keystroke Project Structure: Directories and Discovery"
+sidebarTitle: "Project Structure"
+description: "Learn how Keystroke discovers agents, workflows, triggers, and actions by file location. Follow the conventions and HTTP routing is set up automatically."
+---
+
+Keystroke uses file-based discovery to build your application — the same idea as Next.js pages, but for AI agents and automation. Drop a file that exports a `defineAgent`, `defineWorkflow`, or trigger source into the right directory, and the framework finds it, compiles it, and mounts an HTTP route automatically. You never write a router by hand.
+
+## Project layout
+
+A typical Keystroke project looks like this:
+
+```
+keystroke.config.ts
+src/
+  agents/          # defineAgent files → POST /agents/{slug}
+  workflows/       # defineWorkflow files → POST /workflows/{slug}
+  triggers/        # trigger sources → POST /triggers/{key}
+  actions/         # defineAction files (shared steps and agent tools)
+  skills/          # SKILL.md playbooks loaded into agent context
+  files/           # documents pre-loaded into agent workspaces
+  routes/          # optional custom Hono routes
+```
+
+`keystroke.config.ts` sits at the project root and registers integrations and server options. Everything your agents, workflows, and triggers export lives under `src/`.
+
+## Discovery rules
+
+Keystroke walks each source directory at build time and collects every TypeScript file that has a **default export** (for agents, workflows, and triggers) or a **named export** (for actions). The rules per directory are:
+
+<CardGroup cols={2}>
+  <Card title="agents/" icon="robot">
+    Each file must `export default defineAgent(...)`. One agent per file. The `slug` field on the definition becomes the route key.
+  </Card>
+  <Card title="workflows/" icon="diagram-project">
+    Each file must `export default defineWorkflow(...)`. One workflow per file. The `slug` field becomes the route key.
+  </Card>
+  <Card title="triggers/" icon="bolt">
+    Each file must `export default defineCronSource(...)`, `defineWebhookSource(...)`, or `definePollSource(...)`. Call `.attach({ workflow })` or `.attach({ agent })` in the same file.
+  </Card>
+  <Card title="actions/" icon="gear">
+    Named exports of `defineAction(...)`. Multiple actions can share a file. Actions are not auto-mounted as routes — they are imported by workflows and agents.
+  </Card>
+</CardGroup>
+
+<Note>
+  The `skills/` and `files/` directories are not source-code directories — they contain Markdown and document assets. Keystroke packs them into a virtual `@keystrokehq/assets` module at build time so agents can reference them by name at runtime.
+</Note>
+
+## Route derivation
+
+Keystroke derives the HTTP route from the **`slug`** (agents and workflows) or **`key`** (triggers) you set in `defineAgent`, `defineWorkflow`, or the trigger source factory — not from the filename. The filename is only how the discovery scanner finds the file.
+
+```ts
+// src/agents/support.ts
+export default defineAgent({
+  slug: "support",   // → POST /agents/support
+  ...
+});
+```
+
+```ts
+// src/workflows/signup-pipeline.ts
+export default defineWorkflow({
+  slug: "signup-pipeline",   // → POST /workflows/signup-pipeline
+  ...
+});
+```
+
+```ts
+// src/triggers/morning-check.ts
+export default defineCronSource({
+  key: "morning-check",      // → POST /triggers/morning-check
+  schedule: "0 9 * * *",
+}).attach({ agent: support, prompt: () => morningCheckPrompt() });
+```
+
+<Tip>
+  Keep filenames and slugs in sync (e.g. `support.ts` for `slug: "support"`) to make the project easy to navigate, even though the framework only looks at the exported value.
+</Tip>
+
+## Nested folders
+
+You can organise files into subdirectories within any source directory. Discovery is recursive, so the following are all found correctly:
+
+```
+src/
+  agents/
+    support.ts
+    internal/
+      secretary.ts
+  actions/
+    crm/
+      triage.ts
+      assign.ts
+    notifications/
+      slack-alert.ts
+```
+
+Route keys still come from the `slug` / `key` in each file's export — the folder path has no effect on the mounted URL.
+
+## Configuring source directories
+
+By default Keystroke looks for `src/agents/`, `src/workflows/`, etc. You can override the root or individual directory paths using `dirs` in `keystroke.config.ts`:
+
+```ts
+// keystroke.config.ts
+import { defineConfig } from "@keystrokehq/keystroke/config";
+
+export default defineConfig({
+  dirs: {
+    agents: "src/agents",
+    workflows: "src/workflows",
+    triggers: "src/triggers",
+    actions: "src/actions",
+    skills: "src/skills",
+    files: "src/files",
+    routes: "src/routes",
+  },
+});
+```
+
+Most projects leave `dirs` unset and rely on the `src/` defaults.
+
+## Custom Hono routes
+
+If you need HTTP endpoints beyond the standard agent/workflow/trigger surface, create files in `src/routes/`. Each file receives a Hono app instance and can mount any route:
+
+```ts
+// src/routes/health.ts
+import type { Hono } from "hono";
+
+export default function register(app: Hono) {
+  app.get("/health", (c) => c.json({ ok: true }));
+}
+```
+
+<Warning>
+  Custom routes in `src/routes/` bypass Keystroke's credential resolution, execution mode, and run tracking. Use them for lightweight utility endpoints only — keep business logic in workflows and agents.
+</Warning>
+
+## Build output and route manifest
+
+Run `keystroke build` to compile your project to `dist/`. After a successful build you can inspect the discovered route manifest at:
+
+```
+dist/.keystroke/route-manifest.json
+```
+
+The manifest lists every mounted agent, workflow, and trigger alongside its HTTP path and metadata. It is a useful way to verify that all your files are being picked up correctly before you deploy.
+
+```bash
+keystroke build
+cat dist/.keystroke/route-manifest.json
+```

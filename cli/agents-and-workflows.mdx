@@ -1,0 +1,267 @@
+---
+title: "Invoke Agents and Workflows from the CLI"
+sidebarTitle: "Agents & Workflows"
+description: "Use keystroke agent and keystroke workflow commands to invoke your agents and workflows directly from the terminal without writing curl commands."
+---
+
+The `keystroke agent`, `keystroke workflow`, and `keystroke trigger` command groups let you interact with your running Keystroke server — local or deployed — straight from the terminal. You can send a message to an agent, run a workflow with JSON input, fire a poll trigger on demand, or look up a webhook URL to paste into an external service. All commands print JSON to stdout so they compose cleanly with tools like `jq`.
+
+## `keystroke agent`
+
+The `agent` command group lets you send messages to agents, list available agents, and inspect conversation sessions.
+
+### `agent prompt` — send a message
+
+```bash
+keystroke agent prompt <agentId> --message "<text>"
+```
+
+```bash
+# Start a new session
+keystroke agent prompt hello --message "What can you help me with?"
+
+# Follow up in an existing session
+keystroke agent prompt hello \
+  --message "Tell me more" \
+  --session-id sess_abc123
+```
+
+<ParamField path="<agentId>" type="string" required>
+  The agent's key or route ID — the identifier you used when defining the agent in `src/agents/`.
+</ParamField>
+
+<ParamField path="--message" type="string" required>
+  The message text to send to the agent.
+</ParamField>
+
+<ParamField path="--session-id" type="string">
+  An existing session ID to continue a conversation. When omitted, a new session is created.
+</ParamField>
+
+**Example output:**
+
+```json
+{
+  "sessionId": "sess_abc123",
+  "message": {
+    "role": "assistant",
+    "content": "I can help you build and automate workflows..."
+  },
+  "status": "completed"
+}
+```
+
+### `agent list` — see available agents
+
+```bash
+keystroke agent list
+```
+
+Lists all agents registered in the active organization. If an active project is set (via `keystroke config use project`), results are filtered to that project.
+
+### `agent sessions` — inspect conversation history
+
+```bash
+# List sessions for an agent
+keystroke agent sessions list <agentId>
+keystroke agent sessions list hello --limit 50 --status completed
+
+# Get full details for a specific session
+keystroke agent sessions get <agentId> <sessionId>
+keystroke agent sessions get hello sess_abc123 --include messages,trace
+```
+
+<ParamField path="--limit" type="number" default="20">
+  Number of sessions to return per page (1–100).
+</ParamField>
+
+<ParamField path="--cursor" type="string">
+  Pagination cursor from a previous page's response.
+</ParamField>
+
+<ParamField path="--status" type="string">
+  Filter sessions by status: `running`, `completed`, or `failed`.
+</ParamField>
+
+<ParamField path="--source" type="string">
+  Filter sessions by source: `api` or `gateway`.
+</ParamField>
+
+<ParamField path="--include" type="string">
+  For `sessions get`: comma-separated list of additional data to include — `gateway`, `messages`, `events`, `trace`.
+</ParamField>
+
+---
+
+## `keystroke workflow`
+
+The `workflow` command group lets you invoke workflows with arbitrary JSON input, list registered workflows, and dig into run history.
+
+### `workflow run` — invoke a workflow
+
+```bash
+keystroke workflow run <workflowId> --input '<json>'
+```
+
+```bash
+# Run with default empty input
+keystroke workflow run send-welcome-email
+
+# Run with JSON input
+keystroke workflow run math --input '{"first": 10, "second": 5}'
+
+# Pipe complex input from a file
+keystroke workflow run process-order --input "$(cat order.json)"
+```
+
+<ParamField path="<workflowId>" type="string" required>
+  The workflow's key or route ID.
+</ParamField>
+
+<ParamField path="--input" type="string" default="{}">
+  A JSON string to send as the request body. Must be valid JSON — the CLI validates it before sending and prints a helpful error if it is malformed.
+</ParamField>
+
+When a workflow is queued rather than completed immediately, the CLI prints tracking instructions to stderr:
+
+```
+Run queued. Track progress:
+  keystroke workflow runs get math run_xyz789 --include steps,trace
+```
+
+### `workflow list` — see available workflows
+
+```bash
+keystroke workflow list
+```
+
+Lists all workflows in the active organization, optionally filtered to the active project.
+
+### `workflow runs` — inspect run history
+
+```bash
+# List recent runs for a workflow
+keystroke workflow runs list <workflowId>
+keystroke workflow runs list math --limit 10 --status failed
+
+# Get full details for a specific run
+keystroke workflow runs get <workflowId> <runId>
+keystroke workflow runs get math run_xyz789 --include steps,trace
+```
+
+<ParamField path="--limit" type="number" default="20">
+  Number of runs per page (1–100).
+</ParamField>
+
+<ParamField path="--cursor" type="string">
+  Pagination cursor from a previous page.
+</ParamField>
+
+<ParamField path="--status" type="string">
+  Filter by run status: `pending`, `running`, `completed`, or `failed`.
+</ParamField>
+
+<ParamField path="--trigger" type="string">
+  Filter by trigger kind: `api`, `cron`, `webhook`, `poll`, or `retry`.
+</ParamField>
+
+<ParamField path="--include" type="string">
+  For `runs get`: comma-separated list of additional data — `trigger`, `steps`, `trace`.
+</ParamField>
+
+---
+
+## `keystroke trigger`
+
+The `trigger` command group lets you inspect discovered triggers, fire poll triggers on demand, and resolve webhook URLs for external configuration.
+
+### `trigger list` — see all triggers
+
+```bash
+keystroke trigger list
+
+# Filter to webhook triggers on a shared endpoint
+keystroke trigger list --endpoint my-endpoint
+```
+
+<ParamField path="--endpoint" type="string">
+  Limit results to webhook triggers that share this endpoint identifier.
+</ParamField>
+
+### `trigger get` — inspect a single trigger
+
+```bash
+keystroke trigger get <id>
+```
+
+Returns full details for the trigger with the given key, or all webhook triggers sharing a given endpoint.
+
+### `trigger url` — resolve a webhook URL
+
+```bash
+keystroke trigger url <id>
+```
+
+Prints the full webhook URL for a trigger as a single line — ready to pipe into `curl` or paste into a third-party webhook configuration:
+
+```bash
+# Copy the URL to your clipboard (macOS)
+keystroke trigger url incoming-message | pbcopy
+
+# Use it directly in curl
+curl -X POST "$(keystroke trigger url incoming-message)" \
+  -H "Content-Type: application/json" \
+  -d '{"event": "message_received"}'
+```
+
+### `trigger poll` — fire a poll trigger on demand
+
+```bash
+keystroke trigger poll <id>
+
+# Run all attachments sharing a poll source
+keystroke trigger poll my-source-id --group
+
+# Run only specific workflows
+keystroke trigger poll daily-sync --workflow send-report --workflow notify-team
+
+# Run only specific attachments
+keystroke trigger poll daily-sync --attachment attach_abc123
+```
+
+<ParamField path="<id>" type="string" required>
+  Poll attachment key, or a poll source ID when used with `--group`.
+</ParamField>
+
+<ParamField path="--group" type="flag">
+  Run all attachments that share this poll source ID rather than a single attachment.
+</ParamField>
+
+<ParamField path="--workflow" type="string">
+  Only trigger this workflow (repeatable — pass the flag multiple times to target several workflows).
+</ParamField>
+
+<ParamField path="--attachment" type="string">
+  Only trigger this specific attachment (repeatable).
+</ParamField>
+
+---
+
+## Targeting a remote server
+
+By default all `agent`, `workflow`, and `trigger` commands talk to `http://localhost:3001`. After running `keystroke deploy`, the active target is automatically updated to your cloud project URL. You can also switch targets manually:
+
+```bash
+# Switch to local dev server
+keystroke config use local
+
+# Switch to a deployed cloud project
+keystroke config use project proj_abc123
+
+# Check the current target
+keystroke config show
+```
+
+<Tip>
+  All commands output newline-delimited JSON to stdout, making them easy to pipe into `jq` for filtering and formatting. For example: `keystroke workflow runs list my-workflow | jq '.runs[] | select(.status == "failed")'`
+</Tip>

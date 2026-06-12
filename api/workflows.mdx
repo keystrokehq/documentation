@@ -1,0 +1,169 @@
+---
+title: "POST /workflows/{slug}: Run a Workflow"
+sidebarTitle: "POST /workflows"
+description: "POST /workflows/{slug} runs a workflow with the given input. Returns the result inline or a run ID if queued. Input must match the workflow's Zod schema."
+---
+
+Workflows are pure, deterministic functions with typed inputs and outputs. Each workflow file in `src/workflows/` becomes a `POST` endpoint. Send the workflow's expected input as a JSON body and you get the output back — either inline in the response body or as a queued run ID you can poll later.
+
+The request body is validated against the workflow's Zod input schema before execution begins. If the body is missing a required field or contains an unexpected type, the server rejects the request with a `400` and a structured validation error before any work is done.
+
+## Endpoint
+
+```
+POST /workflows/{slug}
+```
+
+### Path parameters
+
+<ParamField path="slug" type="string" required>
+  The workflow's slug, derived from its source filename. `src/workflows/morning-check.ts` becomes `morning-check`; `src/workflows/support/inbox/workflow.ts` becomes `support/inbox`.
+</ParamField>
+
+### Request body
+
+Send a JSON object that matches the workflow's declared input schema. Workflows with an empty input schema (`z.object({})`) accept an empty body or `{}`.
+
+<ParamField body="(workflow input)" type="object">
+  The input fields expected by this workflow's Zod schema. See the workflow's source file or the live [OpenAPI spec](/api/openapi) for the exact shape.
+</ParamField>
+
+### Response fields
+
+Inline `200` responses contain the workflow's output object directly. Queued `202` responses contain the fields below.
+
+<ResponseField name="ok" type="boolean">
+  Always `true` on a queued response.
+</ResponseField>
+
+<ResponseField name="runId" type="string">
+  The unique identifier for the queued run. Use this with `GET /workflows/{slug}/runs/{runId}` to check status and retrieve output when the run completes.
+</ResponseField>
+
+## Examples
+
+### Basic workflow invocation
+
+<CodeGroup>
+```bash Request
+curl -X POST http://localhost:3001/workflows/incoming-message \
+  -H 'content-type: application/json' \
+  -d '{"message": "Hello", "sender": "alice"}'
+```
+
+```json Response (200 inline)
+{
+  "reply": "Hello Alice, how can I help you today?",
+  "processedAt": "2025-01-15T09:00:00.000Z"
+}
+```
+</CodeGroup>
+
+### Workflow with no input
+
+Workflows that declare an empty input schema can be invoked with no body or an empty JSON object.
+
+<CodeGroup>
+```bash Request
+curl -X POST http://localhost:3001/workflows/morning-check
+```
+
+```json Response (200 inline)
+{
+  "phrase": "Good morning! Here are your 3 tasks for today."
+}
+```
+</CodeGroup>
+
+### Queued run response
+
+In `keystroke dev` and production deployments with a job queue, the server enqueues the run and returns `202` immediately.
+
+<CodeGroup>
+```bash Request
+curl -X POST http://localhost:3001/workflows/morning-check \
+  -H 'content-type: application/json'
+```
+
+```json Response (202 queued)
+{
+  "runId": "run_01HZXYZ..."
+}
+```
+</CodeGroup>
+
+### Check run status
+
+Use the `runId` from a `202` response to poll for the completed output.
+
+```bash
+curl "http://localhost:3001/workflows/morning-check/runs/run_01HZXYZ..."
+```
+
+```json
+{
+  "run": {
+    "id": "run_01HZXYZ...",
+    "workflowSlug": "morning-check",
+    "status": "completed",
+    "trigger": "api",
+    "triggeredAt": "2025-01-15T09:00:00.000Z",
+    "startedAt": "2025-01-15T09:00:00.012Z",
+    "finishedAt": "2025-01-15T09:00:01.842Z",
+    "input": {},
+    "output": {
+      "phrase": "Good morning! Here are your 3 tasks for today."
+    },
+    "error": null
+  },
+  "steps": [],
+  "trigger": null,
+  "trace": null
+}
+```
+
+### Validation error
+
+If your request body does not match the workflow's input schema, the server returns `400` before executing anything.
+
+```json Response (400)
+{
+  "error": "Invalid workflow input",
+  "issues": [
+    {
+      "path": ["sender"],
+      "message": "Required"
+    }
+  ]
+}
+```
+
+## Run history endpoints
+
+### List runs
+
+```
+GET /workflows/{slug}/runs
+```
+
+Returns a paginated list of runs for the workflow. Accepts query parameters `limit`, `cursor`, `status`, and `trigger`.
+
+```bash
+curl "http://localhost:3001/workflows/incoming-message/runs?limit=50&status=completed"
+```
+
+### Get run detail
+
+```
+GET /workflows/{slug}/runs/{runId}
+```
+
+Returns the full run record — status, input, output, timing, and error if any. Step traces are included by default; use `?include=steps,trigger,trace` to customise which fields are embedded.
+
+```bash
+curl "http://localhost:3001/workflows/incoming-message/runs/run_01HZXYZ..."
+```
+
+<Warning>
+  Workflow inputs are validated with Zod before execution. A `400` response means the body you sent does not match the schema. Check the `issues` array in the response for field-level details, or fetch `GET /openapi.json` to see the exact schema for this workflow.
+</Warning>

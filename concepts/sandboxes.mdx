@@ -1,0 +1,150 @@
+---
+title: "Sandboxes: Isolated Workspaces for Agents and Workflows"
+sidebarTitle: "Sandboxes"
+description: "Sandboxes give agents and workflows an isolated file workspace with read, write, and bash tools. Pre-populate files at startup and share workspaces across runs."
+---
+
+Sandboxes give agents and workflows an isolated on-disk workspace backed by a set of coding tools: `bash`, `read`, `write`, and `edit`. When an agent or workflow has a sandbox attached, Keystroke materializes a directory on the host filesystem before the run begins, copies in any files you declared, and mounts the directory at `/workspace` inside the runtime. The agent can read and write files, run shell commands, and produce artifacts — all scoped to that run.
+
+## Defining a sandbox
+
+Use `defineSandbox` to declare a reusable file layout. Each entry in `files` maps a destination path under `/workspace` to its initial content.
+
+```typescript
+import { defineSandbox } from "@keystrokehq/keystroke/sandbox";
+import instructions from "../files/support-instructions.md";
+import guide from "../files/product-guide.md";
+
+export const supportSandbox = defineSandbox({
+  files: [
+    { path: "support-instructions.md", file: instructions },
+    { path: "product-guide.md", file: guide },
+  ],
+});
+```
+
+<ParamField path="files" type="SandboxFile[]">
+  An array of file entries to copy into the workspace before the run. Each entry has:
+
+  - **`path`** — destination path relative to `/workspace`
+  - **`file`** — string content for a single file (typically a build-time import of a `.md` or `.txt` asset)
+  - **`dir`** — an array of `{ path, file }` entries for a directory subtree, where each `path` is relative to the entry's own `path`
+</ParamField>
+
+<ParamField path="key" type="string">
+  An optional stable key for this sandbox definition. Used internally for caching and registry sync.
+</ParamField>
+
+---
+
+## Attaching a sandbox to an agent
+
+Pass a `defineSandbox` result directly to `defineAgent`. The sandbox is materialized into the agent's persistent workspace directory at `{workspacesRoot}/agents/{slug}/` before each prompt.
+
+```typescript
+import { defineAgent } from "@keystrokehq/keystroke/agent";
+import { supportSandbox } from "../sandboxes/support";
+
+export default defineAgent({
+  slug: "support",
+  systemPrompt:
+    "You are helpful support. Read /workspace/support-instructions.md before answering.",
+  model: "anthropic/claude-sonnet-4-5",
+  sandbox: supportSandbox,
+});
+```
+
+Alternatively, use the `files: true` shorthand on `defineAgent` to automatically load files from `src/files/{slug}/` without defining an explicit sandbox:
+
+```typescript
+export default defineAgent({
+  slug: "support",
+  systemPrompt: "...",
+  model: "anthropic/claude-sonnet-4-5",
+  files: true, // loads src/files/support/ into /workspace
+});
+```
+
+---
+
+## Attaching a sandbox to a workflow
+
+Pass a `defineSandbox` result to `defineWorkflow`. The sandbox is materialized into a per-run directory at `{workspacesRoot}/runs/{runId}/` before `run` executes. The path is available on `ctx.sandbox.root`.
+
+```typescript
+import { defineWorkflow } from "@keystrokehq/keystroke/workflow";
+import { z } from "zod";
+import { supportSandbox } from "../sandboxes/support";
+
+export default defineWorkflow({
+  slug: "process-document",
+  input: z.object({ text: z.string() }),
+  output: z.object({ summary: z.string() }),
+  sandbox: supportSandbox,
+  async run(input, ctx) {
+    // ctx.sandbox.root is the absolute path to the materialized workspace
+    console.info("workspace at", ctx.sandbox?.root);
+    // ...
+  },
+});
+```
+
+---
+
+## Workspace scope and priority
+
+When a workflow and an agent both have sandboxes defined, the workflow's sandbox takes precedence. The agent shares the workflow's run-scoped directory rather than materializing its own agent-scoped directory.
+
+| Workflow sandbox | Agent sandbox | Workspace used |
+|---|---|---|
+| Yes | Yes | Workflow run directory (`runs/{runId}/`) |
+| Yes | No | Workflow run directory |
+| No | Yes | Agent directory (`agents/{slug}/`) |
+| No | No | Default agent directory |
+
+When a workflow calls `agent.prompt()` and the workflow has a sandbox, Keystroke automatically passes `workspaceRoot` to the agent so both share the same files on disk.
+
+<Note>
+  When the agent receives an explicit `workspaceRoot` from the workflow, it skips materializing its own sandbox — but it still copies **skills** into the shared workspace directory.
+</Note>
+
+---
+
+## Skills
+
+Skills are named collections of files (prompt fragments, reference docs, templates) that live under `src/skills/{name}/`. When you list skill names on `defineAgent`, Keystroke copies each skill's files into `/workspace/.agents/skills/{name}/` inside the workspace before the agent runs.
+
+```typescript
+export default defineAgent({
+  slug: "support",
+  systemPrompt: "Skills live under /workspace/.agents/skills/.",
+  model: "anthropic/claude-sonnet-4-5",
+  skills: ["support", "tone-guide"],
+});
+```
+
+Skills are copied _in addition to_ any sandbox files, and they are applied even when the agent is given an explicit `workspaceRoot` from a workflow.
+
+---
+
+## VM isolation
+
+By default, agents run in an in-process bash runtime. For stronger isolation, swap in the Microsandbox VM runtime by installing `@keystrokehq/sandbox-vm` and passing a `runtimeProvider` to `defineAgent`:
+
+```typescript
+import { defineAgent } from "@keystrokehq/keystroke/agent";
+import { createMicrosandboxProvider } from "@keystrokehq/sandbox-vm";
+
+export default defineAgent({
+  slug: "untrusted-code-runner",
+  systemPrompt: "You run and evaluate user-provided code safely.",
+  model: "anthropic/claude-sonnet-4-5",
+  runtimeProvider: createMicrosandboxProvider(),
+});
+```
+
+The `runtimeProvider` is a per-agent setting. You can mix runtimes across agents in the same project — some running in-process, others in VMs.
+
+<Warning>
+  The default in-process bash runtime runs commands directly on the host machine with the same permissions as your Node.js process. Use `runtimeProvider` with a VM backend for any agent that executes untrusted code or handles sensitive data.
+</Warning>

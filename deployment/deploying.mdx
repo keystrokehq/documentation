@@ -1,0 +1,156 @@
+---
+title: "Deploying Keystroke Projects to the Cloud Platform"
+sidebarTitle: "Deploying"
+description: "Deploy your Keystroke project to the hosted platform with keystroke deploy. Manage multiple projects, credentials, and triggers from the cloud dashboard."
+---
+
+Deploying a Keystroke project means packaging your built `dist/` directory, uploading it to the Keystroke platform, and having a hosted server provisioned to run it. The platform acts as a control plane — it manages your projects, routes API calls to the right server, stores encrypted credentials, and activates your trigger schedules. Once deployed, your agents, workflows, and triggers are reachable at a stable cloud URL with no infrastructure for you to manage.
+
+## Prerequisites
+
+Before deploying, make sure you have:
+
+- The `keystroke` CLI installed and available on your `PATH`
+- A Keystroke account (sign up at the cloud dashboard)
+- A project created in the dashboard, with its project ID handy
+
+## Deploying your project
+
+<Steps>
+  <Step title="Log in to the Keystroke platform">
+    Authenticate the CLI against the hosted platform using the device flow. This opens a browser window for you to confirm the login.
+
+    ```bash
+    keystroke auth login
+    ```
+
+    To log in against a specific platform URL:
+
+    ```bash
+    keystroke auth login \
+      --web-url https://app.keystroke.ai \
+      --platform-url https://api.keystroke.ai
+    ```
+
+    Your bearer token is stored securely in the OS keychain (macOS Keychain, Windows Credential Manager, or Secret Service on Linux) — never in a plaintext config file. Run `keystroke auth status` at any time to confirm you're authenticated.
+  </Step>
+
+  <Step title="Build the project">
+    Compile your TypeScript source into `dist/`. The build step also writes `dist/.keystroke/route-manifest.json`, which the platform uses to understand your project's routes and trigger schedules.
+
+    ```bash
+    keystroke build
+    ```
+
+    To build a project in a different directory:
+
+    ```bash
+    keystroke build --dir ./my-project
+    ```
+
+    <Note>
+      Always run `keystroke build` before deploying to ensure the manifest reflects your latest source changes. Deploying without a fresh build may upload stale routes.
+    </Note>
+  </Step>
+
+  <Step title="Deploy to the platform">
+    Upload the built project to the platform and provision a hosted server.
+
+    ```bash
+    keystroke deploy --project <project-id>
+    ```
+
+    Replace `<project-id>` with the ID from your cloud dashboard. The CLI packages `dist/`, uploads it, and waits for the server to come online. You'll see the deployment URL printed when it completes.
+  </Step>
+</Steps>
+
+## What happens during deployment
+
+When you run `keystroke deploy`, the following steps happen automatically:
+
+1. **Packaging** — the `dist/` directory (including the route manifest) is archived
+2. **Upload** — the archive is transferred to the platform's artifact store
+3. **Provisioning** — a hosted Keystroke server process is started with your code
+4. **Route activation** — the platform reads the manifest and registers your HTTP routes
+5. **Trigger activation** — cron and poll schedules are registered; webhook URLs are assigned
+
+Your previous deployment continues serving requests until the new one is healthy, so there is no downtime window during a redeploy.
+
+## Platform dashboard
+
+After deploying, open the cloud dashboard to manage your project. From there you can:
+
+<CardGroup cols={2}>
+  <Card title="Agents & Workflows" icon="robot">
+    Browse all discovered agents and workflows, view their schemas, and inspect run history.
+  </Card>
+  <Card title="Triggers" icon="bolt">
+    View active cron, webhook, and poll triggers. Get webhook URLs to paste into external services.
+  </Card>
+  <Card title="Credentials" icon="key">
+    Store and manage OAuth tokens and API keys used by your agents and workflows at runtime.
+  </Card>
+  <Card title="Projects" icon="folder">
+    Create new projects, manage members, and switch between multiple deployments.
+  </Card>
+</CardGroup>
+
+## Managing credentials in the cloud
+
+For credentials used by your deployed agents and workflows — OAuth tokens, integration API keys, and similar secrets — use the `keystroke credentials set` command rather than environment variables. Credentials set this way are encrypted at rest on the platform and injected at runtime without ever appearing in your deployment artifact.
+
+```bash
+# Org-scoped credential (available to all projects in your org)
+keystroke credentials set ANTHROPIC_API_KEY --scope org
+
+# Project-scoped credential (available only to one project)
+keystroke credentials set ANTHROPIC_API_KEY --scope project --project-id <project-id>
+```
+
+Pass `--set key=value` to supply the credential value non-interactively, or omit it to be prompted securely. Credentials are never visible in plaintext after being set.
+
+<Warning>
+  Do not embed production API keys or OAuth tokens in your environment variables or source code. Use `keystroke credentials set` for any secret that a deployed agent or workflow needs at runtime.
+</Warning>
+
+## Checking deployment health
+
+After deploying, verify that the hosted server is running and reachable:
+
+```bash
+keystroke health
+```
+
+This checks the `serverUrl` in your CLI config. If you've switched to the cloud target (see below), it pings your deployed server. A healthy response confirms your agents and workflows are ready to serve requests.
+
+## Re-deploying
+
+To push an updated version of your project, repeat the build and deploy steps:
+
+```bash
+keystroke build
+keystroke deploy --project <project-id>
+```
+
+Each deployment is a full replacement — the platform provisions a new server from your latest `dist/` and cuts traffic over once it's healthy. There is no partial or incremental deploy.
+
+## Switching the CLI target to the platform
+
+By default, commands like `keystroke health` and `keystroke agent` target your local dev server at `http://localhost:3001`. To point the CLI at your cloud deployment instead, update the `serverUrl` in your CLI config:
+
+```bash
+keystroke config use cloud
+```
+
+<Tip>
+  Switch back to local development at any time with `keystroke config use local`. The cloud and local targets are independent — credentials and project IDs are not shared between them.
+</Tip>
+
+## About project IDs
+
+A project ID is a unique identifier assigned to your project on the platform. You can create projects in two ways:
+
+- **Dashboard** — click "New Project" and copy the generated ID
+- **CLI** — some versions of the CLI include a `keystroke project create` command that prints the ID
+
+Pass the project ID to any command that targets a specific deployment, such as `keystroke deploy --project <id>` and `keystroke credentials set <key> --scope project --project-id <id>`. Store it in a `.keystroke` config or an environment variable in your CI pipeline to avoid repeating it.

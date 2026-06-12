@@ -1,0 +1,105 @@
+---
+title: "keystroke init: Scaffold a New Project"
+sidebarTitle: "init"
+description: "keystroke init scaffolds a new Keystroke project with the correct directory structure, config file, and example agent ready to run."
+---
+
+`keystroke init` creates a new Keystroke project from a built-in template. It generates the full directory structure, installs dependencies, and leaves you with a working example agent so you can run `keystroke dev` immediately. The command works interactively in a terminal or fully headlessly for scripts and AI agents — pass `--yes` to accept all defaults without prompts.
+
+## Usage
+
+```bash
+keystroke init [directory]
+```
+
+The optional `directory` argument sets the folder to create the project in. If you omit it, the CLI prompts you for a project name and creates a matching directory in the current working directory.
+
+```bash
+# Interactive — prompts for name and confirms settings
+keystroke init
+
+# Explicit directory
+keystroke init my-agent-app
+
+# Fully headless — no prompts, useful in CI or AI-driven scaffolding
+keystroke init my-agent-app --yes
+
+# Separate name from directory
+keystroke init ./projects/my-app --name my-agent-app --yes
+
+# Skip the automatic package manager install step
+keystroke init my-agent-app --yes --skip-install
+```
+
+## Flags
+
+<ParamField path="[directory]" type="string">
+  Directory to create the project in. The CLI creates the directory if it does not exist. When omitted in interactive mode, you are prompted for a project name and a matching directory is created.
+</ParamField>
+
+<ParamField path="--name" type="string">
+  Package name for the new project (kebab-case). Becomes the `name` field in `package.json`. Defaults to the directory name when `--yes` is set.
+</ParamField>
+
+<ParamField path="--template" type="string" default="hello-world">
+  Template to scaffold from. Currently `hello-world` is the default (and bundled) template.
+</ParamField>
+
+<ParamField path="-y, --yes" type="flag">
+  Skip all interactive prompts and accept defaults. Required for headless use in scripts, CI pipelines, and AI agents.
+</ParamField>
+
+<ParamField path="--skip-install" type="flag">
+  Skip running the package manager install step after scaffolding. Useful when you want to inspect the generated files or install dependencies yourself.
+</ParamField>
+
+<ParamField path="--pm" type="string">
+  Force a specific package manager: `npm`, `pnpm`, `yarn`, or `bun`. By default the CLI auto-detects your package manager from the environment.
+</ParamField>
+
+## What gets created
+
+After running `keystroke init my-agent-app`, your project directory contains:
+
+```
+my-agent-app/
+├── src/
+│   └── agents/         # Your agent definitions go here
+│       └── hello.ts    # Example "hello world" agent
+├── package.json
+├── tsconfig.json
+└── .env.example        # Environment variable template
+```
+
+<Note>
+  The scaffolded project has no `server.ts`. Keystroke's framework bootstrap handles server startup automatically — you only define agents, workflows, and triggers under `src/`.
+</Note>
+
+## After init: next steps
+
+<Steps>
+  <Step title="Enter your project directory">
+    ```bash
+    cd my-agent-app
+    ```
+  </Step>
+  <Step title="Set your API keys">
+    Copy `.env.example` to `.env` and fill in your `ANTHROPIC_API_KEY` and any integration keys your agents need.
+
+    ```bash
+    cp .env.example .env
+    # Edit .env with your editor of choice
+    ```
+  </Step>
+  <Step title="Start the development server">
+    ```bash
+    keystroke dev
+    ```
+
+    The server starts on `http://localhost:3001`. Any change to a file under `src/` triggers a rebuild and server restart.
+  </Step>
+</Steps>
+
+<Tip>
+  Use `--yes` and `--skip-install` together in CI or codegen pipelines to scaffold quickly without waiting for `npm install`, then install in a separate step with your preferred caching strategy.
+</Tip>

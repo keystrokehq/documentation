@@ -1,0 +1,191 @@
+---
+title: "POST /agents/{slug}: Prompt an Agent"
+sidebarTitle: "POST /agents"
+description: "POST /agents/{slug} sends a message to an agent and returns its reply. Accepts JSON or plain text. Supports both inline and queued execution."
+---
+
+Prompting an agent is as simple as sending a `POST` request with your message. The server looks up the agent by its slug — the filename of its source file without the extension — runs the agent with your message, and returns the reply together with a session identifier. You can continue the same conversation across multiple requests by passing the `sessionId` you receive back with each turn.
+
+## Endpoint
+
+```
+POST /agents/{slug}
+```
+
+### Path parameters
+
+<ParamField path="slug" type="string" required>
+  The agent's slug identifier, derived from its source filename. `src/agents/support.ts` becomes `support`; `src/agents/sales/agent.ts` becomes `sales`.
+</ParamField>
+
+### Request body
+
+The endpoint accepts both `application/json` and `text/plain`.
+
+For JSON, send an object with the fields below. For plain text, the entire request body becomes the `message`.
+
+<ParamField body="message" type="string" required>
+  The prompt or question you want to send to the agent.
+</ParamField>
+
+<ParamField body="sessionId" type="string">
+  An existing session ID to continue a previous conversation. Omit to start a new session. If the session belongs to a different agent the server returns `409`.
+</ParamField>
+
+### Response fields
+
+<ResponseField name="sessionId" type="string">
+  The identifier for this conversation session. Carry this forward on your next request to continue the same conversation.
+</ResponseField>
+
+<ResponseField name="messages" type="array">
+  The full message history for this turn, including the assistant's reply. Each item is a message object from the underlying AI SDK.
+</ResponseField>
+
+<ResponseField name="error" type="string | null">
+  Non-null when the agent encountered a recoverable error during the run. The HTTP status is still `200` in that case.
+</ResponseField>
+
+<ResponseField name="runId" type="string">
+  Present only on a `202 Queued` response. Use this to track the background run.
+</ResponseField>
+
+## Examples
+
+### Basic JSON request
+
+<CodeGroup>
+```bash Request
+curl -X POST http://localhost:3001/agents/support \
+  -H 'content-type: application/json' \
+  -d '{"message": "What can you help me with?"}'
+```
+
+```json Response (200 inline)
+{
+  "sessionId": "sess_01HZXYZ...",
+  "messages": [
+    {
+      "role": "user",
+      "content": "What can you help me with?"
+    },
+    {
+      "role": "assistant",
+      "content": "I can help you with account questions, billing, and troubleshooting."
+    }
+  ],
+  "error": null
+}
+```
+</CodeGroup>
+
+### Plain text request
+
+<CodeGroup>
+```bash Request
+curl -X POST http://localhost:3001/agents/support \
+  -H 'content-type: text/plain' \
+  -d 'What can you help me with?'
+```
+
+```json Response (200 inline)
+{
+  "sessionId": "sess_01HZXYZ...",
+  "messages": [
+    {
+      "role": "user",
+      "content": "What can you help me with?"
+    },
+    {
+      "role": "assistant",
+      "content": "I can help you with account questions, billing, and troubleshooting."
+    }
+  ],
+  "error": null
+}
+```
+</CodeGroup>
+
+### Continue an existing session
+
+Pass `sessionId` from a previous response to keep the conversation context alive across multiple requests.
+
+<CodeGroup>
+```bash Request
+curl -X POST http://localhost:3001/agents/support \
+  -H 'content-type: application/json' \
+  -d '{
+    "message": "Can you say more about billing?",
+    "sessionId": "sess_01HZXYZ..."
+  }'
+```
+
+```json Response (200 inline)
+{
+  "sessionId": "sess_01HZXYZ...",
+  "messages": [
+    {
+      "role": "user",
+      "content": "What can you help me with?"
+    },
+    {
+      "role": "assistant",
+      "content": "I can help you with account questions, billing, and troubleshooting."
+    },
+    {
+      "role": "user",
+      "content": "Can you say more about billing?"
+    },
+    {
+      "role": "assistant",
+      "content": "Sure — billing covers invoices, payment methods, and plan upgrades."
+    }
+  ],
+  "error": null
+}
+```
+</CodeGroup>
+
+### Queued response
+
+When the server runs with a job queue (the default in `keystroke dev`), the agent prompt is accepted immediately and executed in the background. You receive a `202` with the `sessionId` to poll for results.
+
+```json Response (202 queued)
+{
+  "sessionId": "sess_01HZXYZ..."
+}
+```
+
+<Note>
+  When you receive a `202`, the `messages` array will not be present until the run completes. Fetch `GET /agents/{slug}/sessions/{sessionId}` to retrieve the full session once the background job finishes.
+</Note>
+
+## Session endpoints
+
+### List sessions
+
+```
+GET /agents/{slug}/sessions
+```
+
+Returns a paginated list of sessions for the named agent. Accepts optional query parameters `limit`, `cursor`, `status`, and `source`.
+
+```bash
+curl "http://localhost:3001/agents/support/sessions?limit=20"
+```
+
+### Get session detail
+
+```
+GET /agents/{slug}/sessions/{sessionId}
+```
+
+Returns the full session record including message history. Messages are included by default; use `?include=messages` explicitly if you are combining it with other include options.
+
+```bash
+curl "http://localhost:3001/agents/support/sessions/sess_01HZXYZ..."
+```
+
+<Tip>
+  Sessions belong to a specific agent. If you call `POST /agents/support` with a `sessionId` that was created by a different agent, the server returns `409 Conflict`.
+</Tip>

@@ -1,0 +1,57 @@
+---
+title: "Keystroke TypeScript SDK: Type-Safe Client Library"
+sidebarTitle: "Overview"
+description: "Install @keystrokehq/sdk to get a typed TypeScript client for your Keystroke server. Call agents, run workflows, fire triggers, and manage credentials."
+---
+
+The `@keystrokehq/sdk` package is the official TypeScript client for your Keystroke server. It wraps every HTTP route with a typed method, validates request and response bodies using Zod schemas from `@keystrokehq/shared`, and turns failed requests into structured `KeystrokeError` instances you can inspect and handle. Whether you're calling a deployed Keystroke server from your backend or scripting against a local development instance, the SDK gives you the same ergonomic, fully-typed interface.
+
+## Installation
+
+```bash
+npm install @keystrokehq/sdk
+```
+
+The SDK has two runtime dependencies: [`ky`](https://github.com/sindresorhus/ky) for HTTP and `@keystrokehq/shared` for request/response schemas. No server-side packages, no Node.js–specific I/O — it works in any environment that supports the Fetch API.
+
+## Quick start
+
+```typescript
+import { createKeystrokeClient } from '@keystrokehq/sdk';
+
+const client = createKeystrokeClient({
+  baseUrl: 'http://localhost:3001',
+});
+
+const result = await client.agents.prompt('support', { message: 'Hello!' });
+console.log(result.reply);
+```
+
+Call `createKeystrokeClient` once with your server URL and an optional authentication strategy. The returned client exposes a namespace for each resource — no class instances, no `new`, no configuration spread across your codebase.
+
+## Available resources
+
+Every resource lives as a property on the client object returned by `createKeystrokeClient`.
+
+| Resource | What it covers |
+|---|---|
+| `agents` | Prompt an agent, list and retrieve sessions |
+| `workflows` | Trigger workflow runs, list and retrieve run history |
+| `triggers` | Fire webhook triggers, run poll triggers, inspect trigger runs |
+| `credentials` | Create, list, update, and delete credential instances |
+| `connect` | List OAuth providers and retrieve authorization URLs |
+| `health` | Server liveness check |
+| `openapi` | Fetch the live OpenAPI document from the server |
+
+<CardGroup cols={2}>
+  <Card title="Client Setup" icon="sliders" href="/sdk/client">
+    Configure `createKeystrokeClient` with auth strategies, base URL options, and learn how to handle `KeystrokeError`.
+  </Card>
+  <Card title="Resources" icon="cube" href="/sdk/typescript-sdk">
+    Complete method reference for agents, workflows, triggers, credentials, health, and openapi resources.
+  </Card>
+</CardGroup>
+
+## What the SDK is not
+
+The SDK is a pure HTTP client — it does not define agents, workflows, or triggers, and it does not contain server route handlers or runtime execution logic. Request and response types such as `PromptInput`, `QueuedRunResponse`, and similar shapes are defined in the contracts package (`@keystrokehq/shared`) and are intentionally not re-exported from the SDK. Import those types directly from `@keystrokehq/shared` when you need them in your own code.

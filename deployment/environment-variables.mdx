@@ -1,0 +1,109 @@
+---
+title: "Keystroke Environment Variables and Project Secrets"
+sidebarTitle: "Environment Variables"
+description: "Configure Keystroke with environment variables for LLM keys, database connections, and OAuth credentials. Only set the variables your project needs."
+---
+
+Keystroke reads configuration from environment variables for anything that varies between machines or environments — LLM provider keys, database connections, OAuth app credentials, and server URLs. Not every variable is required for every project: you only need to set the ones relevant to the features your project actually uses. A minimal project that uses Anthropic models and no OAuth integrations only needs `ANTHROPIC_API_KEY` to get started.
+
+## Common environment variables
+
+The table below lists every variable Keystroke and its integrations recognize, along with their defaults and when you need them.
+
+| Variable | Default | Required for |
+|---|---|---|
+| `PUBLIC_SERVER_URL` | `http://localhost:3001` | Any self-referential URLs, webhook callbacks, OAuth redirect URIs |
+| `PUBLIC_WEB_URL` | `http://localhost:3000` | Web dashboard link generation, auth redirects |
+| `BETTER_AUTH_SECRET` | *(none)* | `/api/auth/*` routes, web login — must be 32+ characters |
+| `ANTHROPIC_API_KEY` | *(none)* | Agents using Anthropic models (Claude) |
+| `OPENAI_API_KEY` | *(none)* | Agents using OpenAI models (GPT) |
+| `GOOGLE_CLIENT_ID` | *(none)* | Google OAuth integration |
+| `GOOGLE_CLIENT_SECRET` | *(none)* | Google OAuth integration |
+| `SLACK_CLIENT_ID` | *(none)* | Slack OAuth integration |
+| `SLACK_CLIENT_SECRET` | *(none)* | Slack OAuth integration |
+| `SLACK_SIGNING_SECRET` | *(none)* | Verifying incoming Slack event payloads |
+| `DATABASE_URL` | `file:./data/dev.db` | Postgres — omit to stay on the default SQLite file |
+
+### Notes on specific variables
+
+- **`PUBLIC_SERVER_URL`** — used wherever the server needs to refer to itself, such as OAuth callback URLs registered with Google or Slack. Set it to your actual domain in production.
+- **`BETTER_AUTH_SECRET`** — a random string of at least 32 characters used to sign session tokens. Generate one with `openssl rand -base64 32`. Any value shorter than 32 characters will cause auth to fail at startup.
+- **`DATABASE_URL`** — Keystroke defaults to SQLite at `./data/dev.db` and creates the file automatically. Pass a Postgres connection string (`postgresql://user:pass@host:5432/db`) to switch to Postgres. The SQLite path can also be set explicitly as `file:./data/dev.db`.
+
+## .env file support
+
+Create a `.env` file in your project root and Keystroke will load it automatically on startup. Copy the example to get started:
+
+```bash
+cp .env.example .env
+```
+
+A typical `.env` for local development:
+
+```bash
+PUBLIC_SERVER_URL=http://localhost:3001
+PUBLIC_WEB_URL=http://localhost:3000
+BETTER_AUTH_SECRET=your-random-secret-min-32-characters!!
+
+# LLM provider — add whichever you use
+ANTHROPIC_API_KEY=sk-ant-...
+OPENAI_API_KEY=sk-...
+
+# Google OAuth (only if using the Google integration)
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+
+# Slack (only if using the Slack integration)
+SLACK_CLIENT_ID=
+SLACK_CLIENT_SECRET=
+SLACK_SIGNING_SECRET=
+
+# Postgres override (leave commented to use SQLite)
+# DATABASE_URL=postgresql://keystroke:keystroke@localhost:5432/keystroke
+```
+
+## Local overrides with .env.local
+
+For values specific to your machine — a personal tunnel URL, a dev OAuth app, a local Postgres instance — create a `.env.local` file alongside `.env`. Values in `.env.local` take precedence over `.env` and are never committed to version control.
+
+```bash
+# .env.local — machine-specific overrides, not committed to git
+PUBLIC_SERVER_URL=https://your-tunnel-subdomain.ngrok.io
+DATABASE_URL=postgresql://you:pass@localhost:5432/keystroke_dev
+```
+
+<Tip>
+  Add `.env.local` to your `.gitignore` if it isn't already. It's the right place for personal API keys, tunnel URLs, and any override you wouldn't want a teammate to accidentally pick up.
+</Tip>
+
+## Credentials vs. environment variables
+
+Environment variables are the right choice for infrastructure-level config that applies uniformly across your project — the server URL, a shared LLM key, a database connection string.
+
+For **user-specific OAuth tokens** and integration credentials that vary per user or are managed through an OAuth install flow, use Keystroke's credentials system instead. Credentials are stored encrypted in the database, resolved at runtime per workflow step, and can be set through the CLI without ever appearing in a file:
+
+```bash
+# Org-scoped (available to all projects in your org)
+keystroke credentials set GOOGLE_ACCESS_TOKEN --scope org
+
+# Project-scoped (available only to one project)
+keystroke credentials set GOOGLE_ACCESS_TOKEN --scope project --project-id <project-id>
+```
+
+Credentials are the right choice when:
+- A token was obtained through an OAuth flow and is user-specific
+- Different workflow runs should use different credentials
+- You're deploying to the cloud and don't want secrets in environment variable config
+
+## Environment variables in production
+
+When deploying to the Keystroke cloud platform, do **not** use environment variable files. Instead:
+
+1. Set infrastructure config (server URL, database, auth secret) through the platform dashboard's project settings
+2. Set integration secrets and LLM keys with `keystroke credentials set <key> --scope project --project-id <id>`
+
+The platform injects both at runtime without them appearing in your deployment artifact.
+
+<Warning>
+  Never commit `.env` files containing real API keys, OAuth secrets, or `BETTER_AUTH_SECRET` values to version control. Add `.env` and `.env.local` to your `.gitignore` and treat their contents as sensitive. Rotate any key that is accidentally committed immediately.
+</Warning>

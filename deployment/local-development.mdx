@@ -1,0 +1,163 @@
+---
+title: "Local Development: Keystroke Dev Server and Dashboard"
+sidebarTitle: "Local Dev"
+description: "Run Keystroke locally with hot reload, the web dashboard, and SQLite. Use keystroke dev for watch mode or keystroke start for a single run."
+---
+
+When you're building a Keystroke project, you run everything locally — your agents, workflows, and triggers are served over HTTP on your own machine. You get a live web dashboard, a SQLite database that requires zero setup, and your choice of two run modes depending on whether you want file-watching or a clean single build. There's no need for a cloud account or any external service to start building.
+
+## Two run modes
+
+Keystroke gives you two commands for running a project locally. They share the same flags and server behavior, differing only in how they respond to source file changes.
+
+<Tabs>
+  <Tab title="keystroke dev">
+    `keystroke dev` watches your `src/` directory and rebuilds whenever a file changes. Each change reruns the bundler and boots a fresh server process, so newly added agents, workflows, and triggers are picked up automatically.
+
+    ```bash
+    keystroke dev
+    keystroke dev --port 3001
+    ```
+
+    Use `keystroke dev` during active development — you never need to restart the process manually.
+  </Tab>
+  <Tab title="keystroke start">
+    `keystroke start` performs an incremental build and starts the server once. It reuses the rolldown build cache when nothing has changed, making it fast to re-run. There is no file watcher.
+
+    ```bash
+    keystroke start
+    keystroke start --port 3001
+    ```
+
+    Use `keystroke start` when you want to verify production-like behavior, run a one-off test, or profile a stable build.
+  </Tab>
+</Tabs>
+
+<Note>
+  `keystroke dev` is **not** true hot module replacement. Each detected change triggers a full bundler pass and a fresh server restart. Discovery picks up new routes on every restart, so you won't miss newly created files.
+</Note>
+
+## Accessing the server
+
+Once either command is running, two endpoints are available:
+
+| Endpoint | Default URL | Purpose |
+|---|---|---|
+| API server | `http://localhost:3001` | Agents, workflows, triggers, OpenAPI |
+| Web dashboard | `http://localhost:3000` | Visual run history, agent browser |
+
+You can change the API port with the `--port` flag. The dashboard always runs on `:3000` by default.
+
+<Tip>
+  Pass `--port` to run multiple Keystroke projects side-by-side: `keystroke dev --port 3002` in a second terminal.
+</Tip>
+
+## Web dashboard
+
+Open `http://localhost:3000` in your browser after starting the server. The dashboard shows you:
+
+- All discovered **agents**, **workflows**, and **triggers**
+- **Run history** for each agent and workflow — inputs, outputs, steps, timing
+- **Credentials** attached to the current project
+
+You don't need to configure anything to use it. It reads directly from the same SQLite database your server is writing to.
+
+## SQLite by default
+
+Keystroke defaults to SQLite, stored at `./data/dev.db` relative to your project root. No database installation, no connection string, no migration step — the file is created automatically on first run.
+
+```
+my-project/
+  data/
+    dev.db        ← created automatically
+  src/
+    agents/
+    workflows/
+    triggers/
+```
+
+If you want to use Postgres instead, set the `DATABASE_URL` environment variable before starting:
+
+```bash
+DATABASE_URL=postgresql://user:pass@localhost:5432/keystroke keystroke dev
+```
+
+## Testing agents and workflows locally
+
+With the server running, you can hit any discovered route with `curl` or any HTTP client. All routes accept JSON bodies matching the schema you defined.
+
+<CodeGroup>
+
+```bash Agent
+curl -X POST http://localhost:3001/agents/support \
+  -H 'content-type: application/json' \
+  -d '{"message":"What can you help me with?"}'
+```
+
+```bash Workflow
+curl -X POST http://localhost:3001/workflows/morning-check \
+  -H 'content-type: application/json' \
+  -d '{}'
+```
+
+```bash Workflow with input
+curl -X POST http://localhost:3001/workflows/incoming-message \
+  -H 'content-type: application/json' \
+  -d '{"message":"hello","sender":"alice"}'
+```
+
+```bash Webhook trigger
+curl -X POST http://localhost:3001/triggers/incoming-message \
+  -H 'content-type: application/json' \
+  -d '{"text":"hello","from":"alice"}'
+```
+
+```bash Poll trigger (manual)
+curl -X POST http://localhost:3001/triggers/new-inbox/poll
+```
+
+</CodeGroup>
+
+Agents also accept plain text bodies if you prefer:
+
+```bash
+curl -X POST http://localhost:3001/agents/support \
+  -H 'content-type: text/plain' \
+  -d 'What can you help me with?'
+```
+
+To see every route your project currently exposes, fetch the OpenAPI spec:
+
+```bash
+curl -s http://localhost:3001/openapi.json | jq '.paths | keys'
+```
+
+## Watching logs
+
+Both `keystroke dev` and `keystroke start` stream structured logs directly to your terminal. You'll see:
+
+- Server startup and discovered routes
+- Incoming HTTP requests with method, path, and status
+- Agent and workflow execution steps
+- Rebuild and restart events (`dev` mode only)
+
+No additional tooling is required — everything is printed to stdout as it happens.
+
+## Custom port
+
+Use the `--port` flag to run the API on a different port. This is useful when port 3001 is already in use, or when you need to run multiple projects concurrently.
+
+```bash
+keystroke dev --port 3002
+keystroke start --port 3002
+```
+
+The `PUBLIC_SERVER_URL` environment variable should match whatever port you use, so that any self-referential links or webhook callbacks resolve correctly:
+
+```bash
+PUBLIC_SERVER_URL=http://localhost:3002 keystroke dev --port 3002
+```
+
+<Note>
+  The `--dir` flag lets you specify a project root other than the current working directory: `keystroke dev --dir ./my-project`. This is useful when running commands from a parent directory.
+</Note>

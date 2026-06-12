@@ -1,0 +1,160 @@
+---
+title: "Install Keystroke: CLI Setup and Project Dependencies"
+sidebarTitle: "Installation"
+description: "Install the Keystroke CLI, add @keystrokehq/keystroke to your project, and configure LLM provider keys. Requires Node.js 22+ and a package manager."
+---
+
+This page covers everything you need to get Keystroke installed and your project's dependencies in order — from system requirements and the CLI binary to integration packages and LLM provider API keys.
+
+## Prerequisites
+
+Before you install Keystroke, make sure your environment meets these requirements:
+
+- **Node.js 22 or later** — Keystroke uses native Node.js features that require v22+. Run `node --version` to check.
+- **A package manager** — npm, pnpm, or yarn all work.
+- **An LLM provider API key** — at least one provider key (e.g. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) is required to run agents. See [LLM provider keys](#llm-provider-api-keys) below.
+
+## Installing the CLI
+
+Install the `keystroke` binary globally so you can run `keystroke init`, `keystroke dev`, and other commands from any directory.
+
+<CodeGroup>
+  ```bash npm
+  npm install -g @keystrokehq/cli
+  ```
+
+  ```bash pnpm
+  pnpm add -g @keystrokehq/cli
+  ```
+
+  ```bash yarn
+  yarn global add @keystrokehq/cli
+  ```
+</CodeGroup>
+
+Verify the install:
+
+```bash
+keystroke --version
+```
+
+If you prefer not to install globally, you can also use `npx @keystrokehq/cli <command>` for one-off commands like `init`.
+
+## Project dependencies
+
+When you scaffold a project with `keystroke init`, the CLI generates a `package.json` with the correct dependencies. If you're setting up a project manually, here's what belongs in each section:
+
+```json
+{
+  "dependencies": {
+    "@keystrokehq/keystroke": "latest",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@keystrokehq/cli": "latest"
+  }
+}
+```
+
+<Note>
+  `zod` is a **peer dependency** of `@keystrokehq/keystroke` — you must install it explicitly in your project. Keystroke does not re-export or bundle Zod. Import it directly from `"zod"` in your actions, agents, and credential definitions.
+</Note>
+
+Install dependencies with your package manager of choice:
+
+<CodeGroup>
+  ```bash npm
+  npm install
+  ```
+
+  ```bash pnpm
+  pnpm install
+  ```
+
+  ```bash yarn
+  yarn install
+  ```
+</CodeGroup>
+
+## Integration packages
+
+Integration packages are optional plugins that add first-class support for external services. Register them in `keystroke.config.ts` using `defineConfig`.
+
+<CodeGroup>
+  ```bash npm
+  npm install @keystrokehq/slack @keystrokehq/google @keystrokehq/exa
+  ```
+
+  ```bash pnpm
+  pnpm add @keystrokehq/slack @keystrokehq/google @keystrokehq/exa
+  ```
+
+  ```bash yarn
+  yarn add @keystrokehq/slack @keystrokehq/google @keystrokehq/exa
+  ```
+</CodeGroup>
+
+| Package               | What it provides                                      |
+| --------------------- | ----------------------------------------------------- |
+| `@keystrokehq/slack`  | Slack OAuth, gateway (Slack → agent session), actions |
+| `@keystrokehq/google` | Google OAuth and Google API actions                   |
+| `@keystrokehq/exa`    | Exa web search actions and MCP server                 |
+
+Register integrations in your config file:
+
+```typescript
+import { defineConfig } from "@keystrokehq/keystroke/config";
+import { googleManaged } from "@keystrokehq/google";
+import { slackManaged } from "@keystrokehq/slack";
+
+export default defineConfig({
+  plugins: [
+    googleManaged(),
+    slackManaged(),
+  ],
+});
+```
+
+## LLM provider API keys
+
+Keystroke agents need at least one LLM provider API key to run. Set these as environment variables in a `.env` file at your project root, or export them in your shell.
+
+```bash
+# .env
+
+# Anthropic Claude
+ANTHROPIC_API_KEY=sk-ant-...
+
+# OpenAI
+OPENAI_API_KEY=sk-...
+
+# Google Gemini
+GOOGLE_GENERATIVE_AI_API_KEY=AI...
+```
+
+<Note>
+  You need at least one LLM provider key configured before you can invoke an agent. Keystroke will start without any keys, but agent calls will fail at runtime if no key matches the model specified in `defineAgent({ model: "..." })`.
+</Note>
+
+Each agent declares its model in `defineAgent`. The model string uses the format `provider/model-name` (for example `anthropic/claude-sonnet-4-5` or `openai/gpt-4o`). Make sure you have a valid key for the provider your agents reference.
+
+## Verify installation
+
+Once everything is installed, confirm the CLI is working and your project is ready to run:
+
+```bash
+# Check CLI version
+keystroke --version
+
+# Scaffold and start a test project
+keystroke init hello --yes
+cd hello
+keystroke dev    # watch mode — rebuilds on file changes (port 3001)
+# or: keystroke start  # single build + stable server, also on port 3001
+```
+
+If the server starts and prints a list of discovered routes, your installation is complete.
+
+<Tip>
+  Run `keystroke --help` at any time to see the full list of available commands and flags.
+</Tip>

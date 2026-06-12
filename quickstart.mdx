@@ -1,0 +1,179 @@
+---
+title: "Keystroke Quickstart: Run Your First AI Agent in 5 Minutes"
+sidebarTitle: "Quickstart"
+description: "Scaffold your first Keystroke project, define an agent, and send your first HTTP request to a running agent server — all in about five minutes."
+---
+
+This guide takes you from zero to a running Keystroke agent server. You'll install the CLI, scaffold a project, start the dev server, and send your first HTTP request to an agent — all in about five minutes.
+
+<Steps>
+  <Step title="Install the Keystroke CLI">
+    Install the `keystroke` binary globally from npm, or use `npx` to run it without a global install.
+
+    <CodeGroup>
+      ```bash npm
+      npm install -g @keystrokehq/cli
+      ```
+
+      ```bash npx (no install)
+      npx @keystrokehq/cli init my-app
+      ```
+
+      ```bash pnpm
+      pnpm add -g @keystrokehq/cli
+      ```
+    </CodeGroup>
+
+    Verify the install succeeded:
+
+    ```bash
+    keystroke --version
+    ```
+  </Step>
+
+  <Step title="Scaffold a new project">
+    Run `keystroke init` to generate a complete project from the `hello-world` template. The `--yes` flag skips interactive prompts.
+
+    ```bash
+    keystroke init my-app --yes
+    cd my-app
+    ```
+
+    If you omit `--yes`, the CLI will prompt you for a package name, template, and package manager choice.
+  </Step>
+
+  <Step title="Explore the project structure">
+    After scaffolding, your project looks like this:
+
+    ```
+    my-app/
+    ├── keystroke.config.ts        # plugins and server config
+    ├── package.json
+    └── src/
+        ├── agents/
+        │   └── support.ts         # → POST /agents/support
+        ├── actions/
+        ├── workflows/
+        └── triggers/
+    ```
+
+    Open `src/agents/support.ts` to see a minimal agent definition:
+
+    ```typescript
+    import { defineAgent } from "@keystrokehq/keystroke/agent";
+
+    export default defineAgent({
+      key: "support",
+      name: "Support Agent",
+      description: "A helpful support assistant.",
+      model: "google/gemini-2.5-flash",
+      system: "You are a friendly support agent. Answer questions clearly and concisely.",
+    });
+    ```
+
+    Every file you add to `src/agents/` gets a `POST /agents/{key}` endpoint — no routing config needed.
+  </Step>
+
+  <Step title="Start the dev server">
+    The `keystroke dev` command builds your project, starts the HTTP server on port 3001, and watches `src/` for changes. Any time you save a file, Keystroke rebuilds and restarts the server automatically so new agents and workflows are picked up immediately.
+
+    ```bash
+    keystroke dev
+    ```
+
+    You should see output like:
+
+    ```
+    ✓ Built in 320ms
+    ✓ Keystroke server running on http://localhost:3001
+      → POST /agents/support
+      → GET  /openapi.json
+    ```
+
+    <Tip>
+      After authenticating with `keystroke auth login`, a web dashboard is also available at **https://app.keystroke.ai**. The dashboard lets you browse agents, inspect run history, and manage credentials from a UI.
+    </Tip>
+  </Step>
+
+  <Step title="Invoke your agent">
+    With the dev server running, send a `POST` request to your agent's endpoint. The body must be a JSON object with a `message` field.
+
+    ```bash
+    curl -X POST http://localhost:3001/agents/support \
+      -H 'content-type: application/json' \
+      -d '{"message": "Hello! What can you help me with?"}'
+    ```
+
+    You can also send a plain-text body:
+
+    ```bash
+    curl -X POST http://localhost:3001/agents/support \
+      -H 'content-type: text/plain' \
+      -d 'What can you help me with?'
+    ```
+  </Step>
+
+  <Step title="Read the response">
+    A successful agent response looks like this:
+
+    ```json
+    {
+      "ok": true,
+      "sessionId": "sess_01jx4k2m3n4p5q6r7s8t9u0v",
+      "runId": "run_01jx4k2m3n4p5q6r7s8t9u0v",
+      "output": {
+        "message": "Hi! I'm your support agent. I can help you troubleshoot issues, answer questions about the product, and guide you through common tasks. What do you need help with today?"
+      }
+    }
+    ```
+
+    Every agent run returns a stable `runId` you can use to look up the run later. The full OpenAPI spec for all your routes is always available at:
+
+    ```bash
+    curl http://localhost:3001/openapi.json | jq '.paths | keys'
+    ```
+  </Step>
+</Steps>
+
+## What's next?
+
+Now that your first agent is running, explore the rest of the framework.
+
+**Add an action** — create a reusable, typed step in `src/actions/` and attach it to your agent's `tools` array or use it as a workflow step:
+
+```typescript
+import { defineAction } from "@keystrokehq/keystroke/action";
+import { z } from "zod";
+
+export const fetchWeather = defineAction({
+  key: "fetch-weather",
+  description: "Fetch the current weather for a city.",
+  input: z.object({ city: z.string() }),
+  output: z.object({ summary: z.string() }),
+  async run({ input }) {
+    // ... call a weather API
+    return { summary: `Sunny in ${input.city}` };
+  },
+});
+```
+
+**Create a workflow** — orchestrate multiple actions and agents in `src/workflows/`:
+
+```typescript
+import { defineWorkflow } from "@keystrokehq/keystroke/workflow";
+import { z } from "zod";
+
+export default defineWorkflow({
+  key: "morning-check",
+  input: z.object({ city: z.string() }),
+  async run({ input, step }) {
+    const weather = await step.run("fetch-weather", { city: input.city });
+    return weather;
+  },
+});
+```
+
+Other next steps:
+
+- **Add a trigger** — fire a workflow on a schedule or webhook in `src/triggers/`
+- **Connect an integration** — add `@keystrokehq/slack` or `@keystrokehq/google` to `keystroke.config.ts`

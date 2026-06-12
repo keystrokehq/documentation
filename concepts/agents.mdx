@@ -1,0 +1,181 @@
+---
+title: "Agents: LLM-Powered Units with Tools and Skills"
+sidebarTitle: "Agents"
+description: "Agents are LLM-powered units in Keystroke. Define a system prompt, choose a model, and attach tools, skills, and files to shape agent behavior."
+---
+
+Agents are the LLM-powered units of Keystroke. Each agent pairs a system prompt with a model and an optional set of tools, skills, and files, giving the model the context and capabilities it needs to complete tasks. You define an agent once with `defineAgent`, and Keystroke automatically mounts it at `POST /agents/{slug}` so it can be called over HTTP or composed inside a workflow.
+
+## Defining an agent
+
+Export a default `defineAgent` call from any file under `src/agents/`. The server discovers it automatically.
+
+```typescript
+import { defineAgent } from "@keystrokehq/keystroke/agent";
+
+export default defineAgent({
+  slug: "support",
+  name: "Support",
+  description: "Answers product questions using bundled docs and the support skill.",
+  systemPrompt:
+    "You are helpful support. Read /workspace/support-instructions.md and /workspace/product-guide.md before answering. Skills live under /workspace/.agents/skills/.",
+  model: "anthropic/claude-sonnet-4.6",
+  skills: ["support"],
+  files: true,
+});
+```
+
+### Parameters
+
+<ParamField path="slug" type="string" required>
+  The unique identifier for this agent. Used as the route key (`POST /agents/{slug}`) and as the workspace directory name.
+</ParamField>
+
+<ParamField path="systemPrompt" type="string" required>
+  The system-level instructions passed to the model at the start of every conversation. Use this to describe the agent's role, how it should behave, and what resources it can read from `/workspace`.
+</ParamField>
+
+<ParamField path="model" type="string" required>
+  The model ID in `provider/model-name` format. Keystroke routes to the correct API based on the provider prefix.
+
+  ```text
+  anthropic/claude-sonnet-4-5
+  openai/gpt-4o
+  moonshotai/kimi-k2.5
+  ```
+
+  Provider API keys are read from environment variables (e.g. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`).
+</ParamField>
+
+<ParamField path="name" type="string">
+  A human-readable display name shown in the dashboard and logs. Defaults to the slug if omitted.
+</ParamField>
+
+<ParamField path="description" type="string">
+  A short description surfaced in the OpenAPI schema and dashboard.
+</ParamField>
+
+<ParamField path="tools" type="array">
+  Actions or MCP server definitions to expose as callable tools. Any `defineAction` export can be passed directly — there is no separate "agent tool" wrapper.
+
+  ```typescript
+  import { searchDocs } from "../actions/search-docs";
+  import { defineMcp } from "@keystrokehq/mcp";
+
+  tools: [searchDocs, defineMcp({ ... })]
+  ```
+</ParamField>
+
+<ParamField path="skills" type="string[]">
+  Names of skill folders under `src/skills/`. Each skill directory is copied into `/workspace/.agents/skills/{name}/` before the agent runs, making prompt fragments, reference docs, and templates available on disk.
+</ParamField>
+
+<ParamField path="files" type="boolean | string">
+  Pre-populate the agent's workspace from `src/files/`. Pass `true` to use the agent's own slug as the file set name, or pass a string to name a different file set under `src/files/{setSlug}/`.
+</ParamField>
+
+<ParamField path="runtimeProvider" type="RuntimeProvider">
+  Swap out the default in-process bash runtime for an isolated VM. Use `@keystrokehq/sandbox-vm` to get a `RuntimeProvider` backed by Microsandbox, then pass it here. When omitted, the agent runs in the default just-bash runtime.
+
+  ```typescript
+  import { createMicrosandboxProvider } from "@keystrokehq/sandbox-vm";
+
+  runtimeProvider: createMicrosandboxProvider()
+  ```
+</ParamField>
+
+<ParamField path="sandbox" type="SandboxDefinition">
+  An inline or shared sandbox layout defined with `defineSandbox`. Use this for fine-grained control over which files are materialized into the workspace. See [Sandboxes](/concepts/sandboxes) for details.
+</ParamField>
+
+<ParamField path="memory" type="MemoryOptions | false">
+  Persistent session memory. Memory is on by default. Pass `false` to disable it for this agent.
+</ParamField>
+
+---
+
+## Invoking an agent over HTTP
+
+Once the server is running, every agent is available at `POST /agents/{slug}`. Send a JSON body with a `message` field, or send plain text directly.
+
+<CodeGroup>
+```bash JSON body
+curl -X POST http://localhost:3000/agents/support \
+  -H "Content-Type: application/json" \
+  -d '{"message": "What can you help me with?"}'
+```
+
+```bash Plain text
+curl -X POST http://localhost:3000/agents/support \
+  -H "Content-Type: text/plain" \
+  -d "What can you help me with?"
+```
+</CodeGroup>
+
+The response is a JSON object with `sessionId`, `messages`, and `error`:
+
+```json
+{
+  "sessionId": "sess_01j...",
+  "messages": [
+    { "role": "user", "content": "What can you help me with?" },
+    { "role": "assistant", "content": "I can help you with ..." }
+  ],
+  "error": null
+}
+```
+
+Pass a `sessionId` to continue an existing conversation:
+
+```bash
+curl -X POST http://localhost:3000/agents/support \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Tell me more", "sessionId": "sess_01j..."}'
+```
+
+---
+
+## Using agents inside workflows
+
+You can call any agent from inside a workflow's `run` function using `agent.prompt()`. This makes the agent a durable step — the workflow engine records the result so the step is not re-executed on replay.
+
+```typescript
+import { defineWorkflow } from "@keystrokehq/keystroke/workflow";
+import { z } from "zod";
+import support from "../agents/support";
+import { lastAssistantText } from "../lib/messages";
+
+export default defineWorkflow({
+  slug: "draft-reply",
+  input: z.object({ message: z.string() }),
+  output: z.object({ reply: z.string() }),
+  async run(input) {
+    const result = await support.prompt({
+      message: `Draft a reply to: ${input.message}`,
+    });
+    return { reply: lastAssistantText(result) ?? "" };
+  },
+});
+```
+
+`agent.prompt()` accepts a `message` string and an optional `sessionId`. When called inside a workflow that has a sandbox attached, the agent automatically receives the workflow's `workspaceRoot` so both share the same filesystem.
+
+<Tip>
+  Multiple `agent.prompt()` calls in the same workflow step loop are each recorded as separate durable steps. If the workflow is replayed, completed prompt steps are skipped and their cached results are returned.
+</Tip>
+
+---
+
+## Model IDs and supported providers
+
+Model IDs follow the `provider/model-name` convention. Keystroke passes them through to the underlying runtime, which resolves the correct API client from your environment variables.
+
+| Provider | Example model ID | Environment variable |
+|---|---|---|
+| Anthropic | `anthropic/claude-sonnet-4-5` | `ANTHROPIC_API_KEY` |
+| OpenAI | `openai/gpt-4o` | `OPENAI_API_KEY` |
+| Moonshot | `moonshotai/kimi-k2.5` | `MOONSHOT_API_KEY` |
+
+<Note>
+  The full list of supported providers is determined by the underlying `@earendil-works/pi-agent-core` runtime. Check [pi.dev/docs](https://pi.dev/docs/latest) for an up-to-date provider and model list.
+</Note>

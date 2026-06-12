@@ -1,0 +1,55 @@
+---
+title: "Keystroke Integrations: Slack, Google, Exa, and MCP"
+sidebarTitle: "Overview"
+description: "Keystroke ships built-in integrations for Slack, Google (Gmail and Calendar), Exa Search, and any MCP server. Add them to keystroke.config.ts to enable."
+---
+
+Keystroke integrations are first-class plugins that wire OAuth flows, credential management, and typed action primitives into your server in a single line of configuration. Once registered, every agent and workflow in your project can import the integration's actions directly — no HTTP boilerplate, no manual token handling.
+
+<CardGroup cols={2}>
+  <Card title="Slack" icon="slack" href="/integrations/slack">
+    Post messages, list channels, open DMs, and turn Slack mentions into agent conversations.
+  </Card>
+  <Card title="Google" icon="google" href="/integrations/google">
+    Read and send Gmail, list calendar events, create meetings, and check free/busy time.
+  </Card>
+  <Card title="Exa" icon="magnifying-glass" href="/integrations/exa">
+    Add powerful web and semantic search to any agent with a single import.
+  </Card>
+  <Card title="MCP" icon="plug" href="/integrations/mcp">
+    Connect any Model Context Protocol server — over HTTP or stdio — to extend your agents with external tools.
+  </Card>
+</CardGroup>
+
+## Registering integrations
+
+You register integrations in `keystroke.config.ts` by calling the integration factory and adding it to the `integrations` array. Keystroke mounts the necessary OAuth routes, gateway webhooks, and credential seeders automatically on startup.
+
+```ts keystroke.config.ts
+import { defineConfig } from "@keystrokehq/keystroke/config";
+import { slack } from "@keystrokehq/slack";
+import { google } from "@keystrokehq/google";
+
+export default defineConfig({
+  integrations: [slack(), google()],
+});
+```
+
+You can include as many integrations as you need. Each integration is independent; removing one from the array unmounts its routes without affecting the others.
+
+## Integration reference
+
+| Integration | What it provides | Package |
+|-------------|-----------------|---------|
+| **Slack** | OAuth app install, bot gateway, `postMessage`, `listMessages`, `lookupUser`, `openDm` actions | `@keystrokehq/slack` |
+| **Google** | OAuth flow with token refresh, Gmail (`sendEmail`, `listEmails`, `getEmail`) and Calendar (`listEvents`, `createEvent`, `updateEvent`, `deleteEvent`, `checkAvailability`) actions | `@keystrokehq/google` |
+| **Exa** | API-key credential, `exa-search`, `exa-search-structured`, `exa-get-contents`, `exa-answer`, `exa-get-context` actions, plus MCP server exports | `@keystrokehq/exa` |
+| **MCP** | `defineMcp` primitive for connecting any MCP server over HTTP or stdio to agent `tools[]` | `@keystrokehq/mcp` |
+
+## Built-in vs custom integrations
+
+The integrations above are maintained by the Keystroke team and versioned alongside the framework. If you need to connect a service that isn't listed here, you can author your own integration package using the same primitives — `defineCredential`, `defineAction`, and `defineMcp` — that power the built-in ones. The Exa package is a good reference: it combines a static API-key credential, five typed actions, and two MCP server definitions in a single, publishable package.
+
+<Note>
+  All built-in integrations store credentials in the Keystroke credential vault, not in environment variables at runtime. Environment variables are only used to **seed** the database on first startup (insert-only). This means secrets survive restarts and can be rotated without redeploying.
+</Note>

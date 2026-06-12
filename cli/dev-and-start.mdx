@@ -1,0 +1,132 @@
+---
+title: "keystroke dev and start: Run Your Project"
+sidebarTitle: "dev & start"
+description: "keystroke dev watches src/ for changes and restarts the server on each rebuild. keystroke start builds once and runs the API. Both expose agents over HTTP."
+---
+
+Keystroke gives you two commands for running your project locally. `keystroke dev` is designed for active development — it watches `src/` for file changes, rebuilds `dist/`, and restarts the API automatically so new agents, workflows, and triggers are always picked up. `keystroke start` is for running a stable build: it compiles the project once and boots the server without a file watcher. Use `keystroke build` when you only want to compile without starting anything.
+
+All three commands boot a self-contained HTTP server that exposes your project's agents and workflows as API routes, backed by a local database.
+
+## `keystroke dev`
+
+Starts a watch-mode development server. Every time you save a file under `src/`, the CLI rebuilds `dist/` using tsdown and restarts the API process so route discovery picks up any new or changed definitions.
+
+```bash
+keystroke dev
+keystroke dev --port 3001
+keystroke dev --dir ./my-app
+```
+
+<Note>
+  `keystroke dev` is **not** true hot reload. Each file change runs a full tsdown rebuild and boots a fresh server process. This is intentional: Keystroke's agent and workflow discovery happens at startup, so a full restart guarantees the running server always reflects your latest `src/` definitions.
+</Note>
+
+### Flags
+
+<ParamField path="--dir" type="string" default="current directory">
+  Path to the project root. Defaults to the directory where you run the command.
+</ParamField>
+
+<ParamField path="--port" type="number" default="3001">
+  Port the API server listens on. Overrides the `serverUrl` port stored in `~/.keystroke`.
+</ParamField>
+
+### Terminal output
+
+When the server is ready you will see a single line identifying the API URL:
+
+```
+keystroke dev: watch rebuilds dist/ and restarts the API — not hot reload.
+API: http://localhost:3001
+```
+
+After each subsequent file change:
+
+```
+API restarted after dist rebuild (not hot reload).
+```
+
+Press `Ctrl+C` to stop the watcher and server cleanly.
+
+---
+
+## `keystroke start`
+
+Builds the project once and starts the API server. There is no file watcher — the server runs until you stop it. Re-running `keystroke start` without modifying `src/` reuses the rolldown cache from the previous build, so startup is fast.
+
+```bash
+keystroke start
+keystroke start --port 3001
+keystroke start --dir ./my-app
+```
+
+### Flags
+
+<ParamField path="--dir" type="string" default="current directory">
+  Path to the project root.
+</ParamField>
+
+<ParamField path="--port" type="number" default="3001">
+  Port the API server listens on.
+</ParamField>
+
+---
+
+## `keystroke build`
+
+Compiles `src/` to `dist/` without starting a server. Useful for verifying your project builds cleanly in CI, or for pre-building before running `keystroke start` with the existing `dist/`.
+
+```bash
+keystroke build
+keystroke build --dir ./my-app
+```
+
+<ParamField path="--dir" type="string" default="current directory">
+  Path to the project root.
+</ParamField>
+
+On success, the CLI prints the path it built:
+
+```
+Built /home/user/my-app
+```
+
+---
+
+## Dev vs. start — which to use
+
+| | `dev` | `start` |
+|---|---|---|
+| File watcher | ✅ Yes | ❌ No |
+| Auto-restart on change | ✅ Yes | ❌ No |
+| Build step on launch | ✅ Yes | ✅ Yes (with cache) |
+| Best for | Active development | Staging / preview environments |
+
+---
+
+## Port configuration
+
+The default port is `3001`. You can change it in three ways (highest precedence first):
+
+1. The `--port` flag: `keystroke dev --port 4000`
+2. The `serverUrl` stored in `~/.keystroke`: e.g. `http://localhost:4000`
+3. The hardcoded default: `http://localhost:3001`
+
+When you override the port with `--port`, the CLI also records the updated URL in the active dev session so that `keystroke health` and other local commands can find the server automatically.
+
+---
+
+## Database
+
+By default, both `dev` and `start` use a SQLite database at `./data/dev.db` relative to your project root. No setup is required — the file is created automatically on first run.
+
+To use PostgreSQL instead, set the `DATABASE_URL` environment variable before starting the server:
+
+```bash
+DATABASE_URL=postgresql://user:pass@localhost:5432/mydb keystroke dev
+```
+
+<Tip>
+  For local development, SQLite is fine for most projects. Switch to Postgres when you need to share state across multiple server instances, run integration tests against a persistent store, or mirror your production database configuration.
+</Tip>

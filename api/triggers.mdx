@@ -1,0 +1,182 @@
+---
+title: "POST /triggers/{key}: Fire Webhook and Poll Triggers"
+sidebarTitle: "POST /triggers"
+description: "POST /triggers/{key} fires a webhook trigger. POST /triggers/{key}/poll runs a poll trigger on demand. Both return the workflow result or a queued run ID."
+---
+
+Triggers connect external events to your workflows and agents. A webhook trigger exposes a URL that any external service can `POST` to; a poll trigger checks a source on a schedule. Both types share the same response structure, and you can fire either one on demand via HTTP — even a cron-scheduled trigger that normally runs automatically.
+
+When a trigger payload arrives, the server validates it against the trigger's request schema, runs the optional filter function, and — if the filter passes — executes the attached workflow or agent with the transformed input. If the filter returns `false`, no workflow runs and the response includes `"skipped": true`.
+
+## Webhook trigger
+
+### Endpoint
+
+```
+POST /triggers/{key}
+```
+
+<ParamField path="key" type="string" required>
+  The trigger's endpoint key. This is the value of the `endpoint` option on the trigger definition. For a trigger defined without a custom `endpoint`, it defaults to the trigger's source `key`. For example, `defineWebhookSource({ endpoint: "incoming-message", … })` maps to `POST /triggers/incoming-message`.
+</ParamField>
+
+<ParamField body="(trigger payload)" type="object" required>
+  A JSON object that matches the trigger's declared `request` schema. The payload is parsed with Zod before being passed to the filter and transform functions.
+</ParamField>
+
+### Response fields
+
+<ResponseField name="ok" type="boolean">
+  Always `true` on a successful response, whether the workflow ran or was skipped.
+</ResponseField>
+
+<ResponseField name="runId" type="string">
+  Present when the workflow was queued for background execution. Poll `GET /triggers/{attachmentKey}/runs/{runId}` for the final result.
+</ResponseField>
+
+<ResponseField name="skipped" type="boolean">
+  Present and `true` when the trigger's filter function returned `false`. No workflow was run.
+</ResponseField>
+
+## Poll trigger on demand
+
+Poll triggers normally execute on a cron schedule. You can fire the poll source immediately — bypassing the scheduler — by calling the `/poll` endpoint. The same filter and transform logic applies: if the poll source returns data that fails the filter, the response is `{ "ok": true, "skipped": true }`.
+
+### Endpoint
+
+```
+POST /triggers/{key}/poll
+```
+
+<ParamField path="key" type="string" required>
+  The poll trigger's key. For a trigger defined as `definePollSource({ key: "new-inbox", … })`, this is `new-inbox`, giving the URL `POST /triggers/new-inbox/poll`.
+</ParamField>
+
+The poll endpoint takes no request body — it calls the trigger's `run()` function internally to fetch fresh data.
+
+### Response fields (poll)
+
+<ResponseField name="ok" type="boolean">
+  Always `true`.
+</ResponseField>
+
+<ResponseField name="runId" type="string">
+  Present when the attached workflow or agent was queued.
+</ResponseField>
+
+<ResponseField name="skipped" type="boolean">
+  Present and `true` when the poll's filter returned `false` (e.g. no new items were found).
+</ResponseField>
+
+## Examples
+
+### Fire a webhook trigger
+
+<CodeGroup>
+```bash Request
+curl -X POST http://localhost:3001/triggers/incoming-message \
+  -H 'content-type: application/json' \
+  -d '{"text": "Hello, I need help", "from": "alice"}'
+```
+
+```json Response (200 inline)
+{
+  "sessionId": "sess_01HZXYZ...",
+  "messages": [
+    {
+      "role": "assistant",
+      "content": "Hi Alice, how can I help you today?"
+    }
+  ],
+  "error": null
+}
+```
+</CodeGroup>
+
+<CodeGroup>
+```bash Request (queued)
+curl -X POST http://localhost:3001/triggers/incoming-message \
+  -H 'content-type: application/json' \
+  -d '{"text": "Hello", "from": "bob"}'
+```
+
+```json Response (202 queued)
+{
+  "runId": "run_01HZXYZ..."
+}
+```
+</CodeGroup>
+
+### Fire a poll trigger on demand
+
+<CodeGroup>
+```bash Request
+curl -X POST http://localhost:3001/triggers/new-inbox/poll
+```
+
+```json Response (200 inline — workflow ran)
+{
+  "summary": "New email from alice@example.com: Hello"
+}
+```
+</CodeGroup>
+
+### Skipped response
+
+When the trigger's filter function returns `false` — for instance, because the poll found no new emails, or a webhook payload did not match the expected branch — the server responds with `ok: true` and `skipped: true` rather than running any workflow.
+
+```json
+{
+  "ok": true,
+  "skipped": true
+}
+```
+
+## Shared webhook endpoints
+
+Multiple trigger attachments can share a single URL by setting the same `endpoint` value on each trigger definition. When a request arrives at the shared URL, the server tries each attachment in order, validates the payload against each attachment's own schema, and runs the ones whose schemas match. Attachments whose schema validation fails are silently skipped.
+
+```bash
+# Fires the "alpha" branch attachment
+curl -X POST http://localhost:3001/triggers/shared-hub \
+  -H 'content-type: application/json' \
+  -d '{"branch": "alpha", "value": "alpha-demo"}'
+
+# Fires the "beta" branch attachment
+curl -X POST http://localhost:3001/triggers/shared-hub \
+  -H 'content-type: application/json' \
+  -d '{"branch": "beta", "value": "  beta-demo  "}'
+
+# Neither branch matches → skipped
+curl -X POST http://localhost:3001/triggers/shared-hub \
+  -H 'content-type: application/json' \
+  -d '{"branch": "alpha", "value": "beta-demo"}'
+```
+
+<Note>
+  The `endpoint` option on `defineWebhookSource` sets the URL key, while the `key` option identifies the individual attachment. Two triggers sharing `endpoint: "shared-hub"` both respond to `POST /triggers/shared-hub`, but each has its own schema, filter, and transform.
+</Note>
+
+## Trigger run history
+
+Each trigger attachment has its own run log. The attachment key follows the pattern `{triggerKey}:{workflowOrAgentSlug}`, for example `incoming-message:incoming-message`.
+
+### List runs
+
+```
+GET /triggers/{attachmentKey}/runs
+```
+
+```bash
+curl "http://localhost:3001/triggers/incoming-message:incoming-message/runs?limit=20"
+```
+
+### Get run detail
+
+```
+GET /triggers/{attachmentKey}/runs/{runId}
+```
+
+```bash
+curl "http://localhost:3001/triggers/incoming-message:incoming-message/runs/run_01HZXYZ..."
+```

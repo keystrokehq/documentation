@@ -1,0 +1,71 @@
+---
+title: "Keystroke CLI Reference and Command Overview"
+sidebarTitle: "Overview"
+description: "The keystroke CLI lets you scaffold projects, run dev servers, deploy to the cloud, invoke agents and workflows, and manage credentials from the terminal."
+---
+
+The `keystroke` CLI is the primary interface for working with Keystroke — both locally against your own development server and against the Keystroke platform control plane for cloud-deployed projects. You can scaffold a new project in seconds, watch for file changes during development, push a finished project to the cloud, and invoke agents or workflows directly from your terminal without writing a single `curl` command.
+
+## Installation
+
+Install the CLI globally from npm:
+
+```bash
+npm install -g @keystrokehq/cli
+```
+
+After installation, the `keystroke` binary is available in your PATH.
+
+```bash
+keystroke --version
+keystroke --help
+```
+
+## Commands at a glance
+
+| Command | Category | What it does |
+|---|---|---|
+| `init` | Local | Scaffold a new project from a template |
+| `build` | Local | Compile `src/` to `dist/` without starting the server |
+| `dev` | Local | Watch `src/`, rebuild on change, and restart the API |
+| `start` | Local | Build once and run the API server |
+| `deploy` | Platform | Package and push your project to the Keystroke cloud |
+| `health` | Local / Platform | Check connectivity to the keystroke API |
+| `auth` | Platform | Log in, check session status, or log out |
+| `agent` | Local / Platform | Prompt agents, list them, and inspect sessions |
+| `workflow` | Local / Platform | Run workflows, list them, and inspect runs |
+| `trigger` | Local / Platform | List, inspect, fire, and resolve webhook URLs for triggers |
+| `credentials` | Platform | Set, list, update, and delete encrypted credential instances |
+| `config` | Local / Platform | Show and switch the active API target, project, and organization |
+
+## Global flags
+
+<ParamField path="--help" type="flag">
+  Print usage information for any command or subcommand. Works at every level: `keystroke --help`, `keystroke agent --help`, `keystroke agent prompt --help`.
+</ParamField>
+
+<ParamField path="--version" type="flag">
+  Print the installed CLI version and exit.
+</ParamField>
+
+## Server targeting
+
+Commands that talk to a running Keystroke server — `health`, `agent`, `workflow`, and `trigger` — need to know where that server lives. The CLI resolves the target in this order:
+
+1. The `--server-url` flag passed directly to the command (where supported)
+2. The `serverUrl` value stored in `~/.keystroke` (set by `keystroke config show` / `keystroke config use`)
+3. The hardcoded default: `http://localhost:3001`
+
+After a successful `keystroke deploy`, the CLI automatically switches the active target to the platform project URL. Run `keystroke config use local` to point back at your local dev server.
+
+## Local vs. platform commands
+
+The CLI splits cleanly into two concerns:
+
+- **Local commands** (`init`, `build`, `dev`, `start`, `health`) talk to the `keystroke` server running on your machine — or wherever `serverUrl` points. They do not require authentication.
+- **Platform commands** (`deploy`, `auth`, `credentials`) talk to the Keystroke control plane at `https://api.keystroke.ai`. They require a valid session from `keystroke auth login`.
+- **Hybrid commands** (`agent`, `workflow`, `trigger`, `config`) work against either target depending on your active configuration.
+
+<Note>
+  You do not need to authenticate to run `keystroke dev`, `keystroke start`, or any other local command. Authentication is only required when interacting with the Keystroke platform for deploys and cloud project management.
+</Note>

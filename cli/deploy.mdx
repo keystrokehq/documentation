@@ -1,0 +1,123 @@
+---
+title: "keystroke deploy: Push Projects to the Cloud"
+sidebarTitle: "deploy"
+description: "keystroke deploy packages your project and pushes it to the Keystroke platform. Requires authentication and a project slug from the dashboard."
+---
+
+`keystroke deploy` builds your project, packages it as a compressed artifact, uploads it to the Keystroke platform, and waits for the runtime to become active. Once the deployment is live, the CLI prints the project's base URL and automatically updates your local configuration to point agent and workflow commands at the deployed instance.
+
+## Prerequisites
+
+Before you can deploy, you need two things:
+
+<Steps>
+  <Step title="Authenticate the CLI">
+    Log in to the Keystroke platform from your terminal. This stores a bearer token in your OS keychain.
+
+    ```bash
+    keystroke auth login
+    ```
+
+    See the [auth reference](/cli/auth) for full details on the login flow.
+  </Step>
+  <Step title="Create a project in the dashboard">
+    Open [app.keystroke.ai](https://app.keystroke.ai), create a new project, and note the **project slug** shown on the project settings page. You will pass this as the global `--project` flag when deploying.
+  </Step>
+</Steps>
+
+## Usage
+
+`--project` is a **global flag** on the `keystroke` root command, placed before the subcommand:
+
+```bash
+keystroke --project <slug> deploy
+```
+
+```bash
+# Deploy the current directory
+keystroke --project my-project deploy
+
+# Deploy a project in a specific directory
+keystroke --project my-project deploy --dir ./my-app
+
+# Upload an existing dist/ without rebuilding
+keystroke --project my-project deploy --skip-build
+```
+
+If you have already run `keystroke config use project <slug>` to set an active project, you can omit `--project` entirely:
+
+```bash
+keystroke deploy
+```
+
+## Flags
+
+<ParamField path="--project" type="string">
+  **Global flag** — the project slug from the Keystroke dashboard. Placed before the subcommand: `keystroke --project <slug> deploy`. When omitted, the CLI falls back to the active project stored in `~/.keystroke` (set via `keystroke config use project <slug>`).
+</ParamField>
+
+<ParamField path="--dir" type="string" default="current directory">
+  Path to the project root. Defaults to the directory where you run the command.
+</ParamField>
+
+<ParamField path="--skip-build" type="flag">
+  Skip the build step and upload the existing `dist/` directory as-is. Use this if you have already run `keystroke build` and want to deploy without rebuilding.
+</ParamField>
+
+## What happens during deploy
+
+<Steps>
+  <Step title="Build">
+    The CLI runs a full production build of your project (equivalent to `keystroke build`). Pass `--skip-build` to reuse an existing `dist/`.
+  </Step>
+  <Step title="Package">
+    The built output is compressed into a gzip tarball artifact ready for upload.
+  </Step>
+  <Step title="Upload">
+    The artifact and your project's source files are uploaded to the platform in parallel. Source files power the read-only file view in the dashboard — a failure there warns but does not block the deploy.
+  </Step>
+  <Step title="Provision">
+    The platform boots a new runtime for your project. The CLI polls every 2 seconds (up to 2 minutes) until the project status becomes `active`.
+  </Step>
+  <Step title="Go live">
+    Once active, the CLI prints your project's base URL and saves it as the active API target:
+
+    ```
+    Deploy art_xyz789 uploaded
+    Project active: https://proj-abc123.keystroke.ai
+    ```
+  </Step>
+</Steps>
+
+## Checking server health after deploy
+
+Use `keystroke health` to verify the deployed server is reachable and returning a valid response:
+
+```bash
+keystroke health
+```
+
+The command hits the `/health` endpoint of the active target (local or platform) and prints the JSON response:
+
+```json
+{ "status": "ok" }
+```
+
+If the server is unreachable or returns an error, the command exits with a non-zero code — useful for CI health checks post-deploy.
+
+<Note>
+  `keystroke health` targets whichever server is currently active. After a successful deploy, that is the platform project URL. Run `keystroke config use local` to switch health checks back to your local dev server.
+</Note>
+
+## Viewing deployment status in the dashboard
+
+After deploying, open [app.keystroke.ai](https://app.keystroke.ai) and navigate to your project to see:
+
+- Deployment history and the status of each artifact
+- Real-time logs from the running runtime
+- A read-only file browser showing the source uploaded with the latest artifact
+- Agent and workflow definitions discovered from the deployed build
+
+<Tip>
+  If a deploy fails with a runtime error, the dashboard logs will show the exact startup output. Common causes are missing environment variables and incorrect `DATABASE_URL` configuration — set these on the project's **Settings → Environment** page before redeploying.
+</Tip>

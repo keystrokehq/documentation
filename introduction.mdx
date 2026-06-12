@@ -1,0 +1,80 @@
+---
+title: "Keystroke: Build AI Agents and Workflows in TypeScript"
+sidebarTitle: "Introduction"
+description: "Keystroke is a TypeScript meta-framework for AI agents and workflows. Drop files into src/agents/ or src/workflows/ and the framework handles routing."
+---
+
+Keystroke is a meta-framework for building production-ready AI agents, durable workflows, and event-driven triggers in TypeScript. Just as Next.js gives React a file-based convention for pages and API routes, Keystroke gives you a file-based convention for AI primitives — drop a file into `src/agents/` and an HTTP endpoint appears automatically. The framework handles discovery, HTTP routing, sandboxed execution, and deployment so you can focus entirely on what your agents do.
+
+## What you can build
+
+<CardGroup cols={2}>
+  <Card title="AI Agents" icon="robot" href="/concepts/agents">
+    LLM-powered agents with tools, memory, and an isolated sandbox. Each agent file becomes a `POST /agents/{key}` endpoint automatically.
+  </Card>
+  <Card title="Workflows" icon="diagram-project" href="/concepts/workflows">
+    Orchestrated, durable sequences of actions and agents with checkpointing and replay. Exposed as `POST /workflows/{key}`.
+  </Card>
+  <Card title="Triggers" icon="bolt" href="/concepts/triggers">
+    Cron, webhook, and poll sources that fire attached workflows or agents on a schedule or external event.
+  </Card>
+  <Card title="Integrations" icon="plug" href="/integrations">
+    First-class plugins for Slack, Google, Exa, and more — registered in `keystroke.config.ts` and available as actions inside any agent or workflow.
+  </Card>
+</CardGroup>
+
+## Core concepts
+
+Keystroke has four building blocks. **Actions** are the atoms; everything else composes them.
+
+| Concept      | Role                                                                    | HTTP endpoint           |
+| ------------ | ----------------------------------------------------------------------- | ----------------------- |
+| **Action**   | A reusable, typed step — the same code works as a workflow step and as an agent tool | —                       |
+| **Agent**    | An LLM paired with tools and an isolated workspace                      | `POST /agents/{key}`    |
+| **Workflow** | A durable, orchestrated sequence of actions and agents                  | `POST /workflows/{key}` |
+| **Trigger**  | A cron, webhook, or poll source attached to a workflow or agent         | `POST /triggers/...`    |
+
+## How Keystroke compares
+
+If you've used Next.js, the mental model maps directly:
+
+| Layer      | Web (Next.js)        | AI (Keystroke)                                   |
+| ---------- | -------------------- | ------------------------------------------------ |
+| Primitives | React                | Hono + agent runtime                             |
+| Framework  | Next.js              | Keystroke — conventions, CLI, build, plugins     |
+| Your app   | `app/`, `pages/`     | `agents/`, `workflows/`, `triggers/`, `routes/`  |
+
+You write plain TypeScript files using Keystroke's `define*` helpers. The framework handles the rest: discovery, HTTP mounting, sandboxing, credential resolution, and the OpenAPI spec at `GET /openapi.json`.
+
+## Project structure
+
+A typical Keystroke project looks like this:
+
+```
+my-app/
+├── keystroke.config.ts        # plugins and server config
+└── src/
+    ├── agents/                # each file → POST /agents/{key}
+    │   └── support.ts
+    ├── actions/               # reusable steps shared by workflows and agents
+    │   └── send-email.ts
+    ├── workflows/             # each file → POST /workflows/{key}
+    │   └── morning-check.ts
+    ├── triggers/              # cron, webhook, and poll attachments
+    │   └── morning-check.ts
+    ├── skills/                # markdown skill files bundled into agents
+    └── files/                 # static files mounted into agent sandboxes
+```
+
+Discovery is automatic — Keystroke finds every entry file and mounts its route. Co-locate helpers beside an entry file freely; only files that export a `define*` default are discovered.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="bolt" href="/quickstart">
+    Scaffold your first project, run the dev server, and send your first agent request in under 5 minutes.
+  </Card>
+  <Card title="Core Concepts" icon="layer-group" href="/concepts">
+    Understand the Action → Agent → Workflow → Trigger composition model in depth.
+  </Card>
+</CardGroup>

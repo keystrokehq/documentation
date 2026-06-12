@@ -1,0 +1,216 @@
+---
+title: "OpenAPI Spec: Auto-Generated for Your Project"
+sidebarTitle: "OpenAPI"
+description: "GET /openapi.json returns a live OpenAPI 3.0 spec for all agents, workflows, and triggers in your project. Use it to generate clients or explore the API."
+---
+
+Every Keystroke server automatically generates an OpenAPI document from the same manifest it uses to mount routes. The document reflects exactly what is running: if you add a new agent, restart the server and the spec includes the new endpoint. No separate annotation step or spec file to maintain.
+
+The document is available at `GET /openapi.json` with no authentication required.
+
+## Endpoint
+
+```
+GET /openapi.json
+```
+
+No request body or query parameters needed.
+
+### Example
+
+```bash
+curl -s http://localhost:3001/openapi.json | jq '.'
+```
+
+You can also inspect just the path keys to get a quick summary of all live routes:
+
+```bash
+curl -s http://localhost:3001/openapi.json | jq '.paths | keys'
+```
+
+```json
+[
+  "/agents/support",
+  "/agents/support/sessions",
+  "/agents/support/sessions/:sessionId",
+  "/health",
+  "/triggers/incoming-message",
+  "/triggers/new-inbox/poll",
+  "/workflows/incoming-message",
+  "/workflows/morning-check"
+]
+```
+
+## What the spec includes
+
+The generated document covers every route produced by the auto-discovery process:
+
+<CardGroup cols={2}>
+  <Card title="Agent routes" icon="robot">
+    `POST /agents/{slug}` with `message` and `sessionId` request fields, and inline vs. queued response schemas.
+  </Card>
+  <Card title="Workflow routes" icon="sitemap">
+    `POST /workflows/{slug}` with the workflow's Zod input schema translated to JSON Schema, and the output schema.
+  </Card>
+  <Card title="Trigger routes" icon="bolt">
+    `POST /triggers/{key}` and `POST /triggers/{key}/poll` with each trigger's request schema and skip/queued response variants.
+  </Card>
+  <Card title="System routes" icon="heart-pulse">
+    `GET /health` and any plugin-mounted routes such as OAuth connect endpoints.
+  </Card>
+</CardGroup>
+
+Beyond the standard OpenAPI paths, the document carries a Keystroke-specific extension object under the `x-keystroke` key:
+
+```json
+{
+  "x-keystroke": {
+    "modules": [
+      { "kind": "agent",    "id": "support",          "file": "support.ts" },
+      { "kind": "workflow", "id": "morning-check",     "file": "morning-check.ts" },
+      { "kind": "workflow", "id": "incoming-message",  "file": "incoming-message.ts" },
+      { "kind": "trigger",  "id": "incoming-message:incoming-message", "file": "incoming-message.ts" }
+    ],
+    "schedules": [
+      {
+        "attachmentId": "morning-check:support",
+        "type": "cron",
+        "schedule": "0 9 * * *"
+      },
+      {
+        "attachmentId": "new-inbox:support",
+        "type": "poll",
+        "schedule": "*/5 * * * *"
+      }
+    ],
+    "conventions": {
+      "agents": {
+        "flat": "{name}.ts → POST /agents/{name}",
+        "nested": "{path}/agent.ts or {path}/index.ts → POST /agents/{path}",
+        "helpers": "Other .ts files under nested folders are not mounted."
+      },
+      "workflows": {
+        "flat": "{name}.ts → POST /workflows/{name}",
+        "nested": "{path}/workflow.ts or {path}/index.ts → POST /workflows/{path}",
+        "helpers": "Other .ts files under nested folders are not mounted."
+      },
+      "triggers": {
+        "flat": "{name}.ts → trigger key {name}, attachment id {triggerKey}:{workflowKey}",
+        "nested": "{path}/trigger.ts or {path}/index.ts → trigger key {path}",
+        "helpers": "Reusable sources live under triggers/sources/ and are not discovered."
+      },
+      "openapi": "GET /openapi.json is built from the same discovery + mount loop as the live server."
+    }
+  }
+}
+```
+
+| Extension field | What it contains |
+|-----------------|-----------------|
+| `modules` | Every discovered source file with its kind (`agent`, `workflow`, `trigger`) and slug |
+| `schedules` | All active cron and poll schedules with their attachment IDs and cron strings |
+| `conventions` | File-layout rules for agents, workflows, and triggers — flat vs. nested patterns and which filenames are recognised as entry points |
+
+## Sample response structure
+
+A minimal project with one agent, one workflow, and one webhook trigger produces a document shaped like this:
+
+```json
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "keystroke",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/agents/support": {
+      "post": {
+        "operationId": "post_agents_support",
+        "summary": "Prompt agent at /agents/support",
+        "tags": ["agents"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "message": { "type": "string" },
+                  "sessionId": { "type": "string" }
+                },
+                "required": ["message"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Agent response" },
+          "202": { "description": "Queued" },
+          "400": { "description": "Bad request" }
+        }
+      }
+    },
+    "/workflows/morning-check": {
+      "post": {
+        "operationId": "post_workflows_morning_check",
+        "summary": "Run workflow at /workflows/morning-check",
+        "tags": ["workflows"]
+      }
+    },
+    "/triggers/incoming-message": {
+      "post": {
+        "operationId": "post_triggers_incoming_message",
+        "summary": "Webhook trigger at /triggers/incoming-message",
+        "tags": ["triggers"]
+      }
+    }
+  }
+}
+```
+
+## Using the spec with external tools
+
+The live OpenAPI document works out of the box with any standard OpenAPI toolchain.
+
+<Steps>
+  <Step title="Explore in Swagger UI">
+    Point Swagger UI at your running server's spec URL. In development you can open `https://editor.swagger.io` and paste `http://localhost:3001/openapi.json` into the URL bar.
+
+    ```bash
+    # Fetch and save the spec for offline use
+    curl -s http://localhost:3001/openapi.json -o openapi.json
+    ```
+  </Step>
+  <Step title="Import into Postman">
+    In Postman, choose **Import → Link** and paste `http://localhost:3001/openapi.json`. Postman will generate a collection with one request per discovered route.
+  </Step>
+  <Step title="Generate a typed client">
+    Use any OpenAPI code generator to produce a typed client for your language of choice. For TypeScript you might use `openapi-typescript`:
+
+    ```bash
+    npx openapi-typescript http://localhost:3001/openapi.json -o src/api-types.ts
+    ```
+
+    Or generate a full client with `hey-api/openapi-ts`:
+
+    ```bash
+    npx @hey-api/openapi-ts \
+      --input http://localhost:3001/openapi.json \
+      --output src/client
+    ```
+  </Step>
+</Steps>
+
+<Note>
+  The spec is regenerated from source files each time the server starts. If you add, rename, or remove an agent or workflow, restart the dev server (`keystroke dev` handles this automatically with watch mode) and fetch `/openapi.json` again to get the updated document.
+</Note>
+
+## Committed snapshot
+
+The example project maintains a committed copy of the spec at `example/openapi.json`. You can regenerate it after route changes using the sync script:
+
+```bash
+pnpm --filter tests sync-example-openapi
+```
+
+Committing the snapshot lets you diff spec changes in code review alongside the source files that caused them.

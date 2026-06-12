@@ -1,0 +1,337 @@
+---
+title: "Google Integration: Gmail and Calendar in Agents"
+sidebarTitle: "Google"
+description: "Connect Keystroke to Google Workspace with OAuth. Add Gmail and Calendar actions to any agent or workflow to read emails, send messages, and manage events."
+---
+
+The Google integration gives every agent and workflow in your Keystroke project access to Gmail and Google Calendar through a single OAuth connection. After setup, you can import typed actions for reading, drafting, and sending email, as well as listing, creating, updating, and deleting calendar events — all with automatic token refresh handled by the framework.
+
+## Setup
+
+<Steps>
+  <Step title="Install the package">
+    Add `@keystrokehq/google` to your project:
+
+    ```bash
+    pnpm add @keystrokehq/google
+    ```
+  </Step>
+
+  <Step title="Register the integration">
+    Import `google` and add it to the `integrations` array in `keystroke.config.ts`:
+
+    ```ts keystroke.config.ts
+    import { defineConfig } from "@keystrokehq/keystroke/config";
+    import { google } from "@keystrokehq/google";
+
+    export default defineConfig({
+      integrations: [google()],
+    });
+    ```
+  </Step>
+
+  <Step title="Create a Google Cloud OAuth client">
+    In the [Google Cloud Console](https://console.cloud.google.com/), create an OAuth 2.0 Client ID of type **Web application**. Enable the **Gmail API** and **Google Calendar API** for your project.
+
+    Set the following environment variables before starting your server:
+
+    ```bash .env
+    GOOGLE_CLIENT_ID=your-client-id
+    GOOGLE_CLIENT_SECRET=your-client-secret
+    PUBLIC_SERVER_URL=https://your-server.example.com
+    ```
+
+    On startup, Keystroke seeds the `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` values into the OAuth app registry (insert-only). The `PUBLIC_SERVER_URL` is used as a fallback when constructing the redirect URI.
+  </Step>
+
+  <Step title="Configure the redirect URI">
+    In the Google Cloud Console under your OAuth client's **Authorized redirect URIs**, add:
+
+    ```
+    {PUBLIC_SERVER_URL}/oauth/google/callback
+    ```
+  </Step>
+
+  <Step title="Connect a Google account">
+    With your server running, authenticate and connect:
+
+    ```bash
+    keystroke auth login
+    keystroke connect google
+    ```
+
+    After a successful callback, Keystroke stores the access and refresh tokens and creates a credential instance for the `google` key at organization scope.
+  </Step>
+</Steps>
+
+## OAuth routes
+
+| Route | Purpose |
+|-------|---------|
+| `GET /oauth/google` | Start the OAuth flow (requires an authenticated session) |
+| `GET /oauth/google/callback` | Handle the OAuth callback and store tokens |
+
+## Gmail actions
+
+Import Gmail actions from `@keystrokehq/google/gmail/actions`. All actions resolve the connected account's access token automatically, including refreshing it when expired.
+
+### sendEmail
+
+Sends a plain-text email from the connected Gmail account.
+
+<ParamField body="to" type="array" required>
+  An array of recipient objects, each with `email` (required) and optional `name`.
+</ParamField>
+
+<ParamField body="subject" type="string" required>
+  The email subject line.
+</ParamField>
+
+<ParamField body="body" type="string" required>
+  The plain-text body of the email.
+</ParamField>
+
+<ParamField body="cc" type="array">
+  CC recipients — same shape as `to`.
+</ParamField>
+
+<ParamField body="bcc" type="array">
+  BCC recipients — same shape as `to`.
+</ParamField>
+
+<ParamField body="replyToMessageId" type="string">
+  A Gmail message ID to reply to. Keystroke sets the correct `In-Reply-To` and `References` headers automatically.
+</ParamField>
+
+<ParamField body="threadId" type="string">
+  A Gmail thread ID to continue an existing conversation.
+</ParamField>
+
+Returns `{ id: string, threadId: string }`.
+
+### listEmails
+
+Lists recent Gmail messages matching an optional search query.
+
+<ParamField body="query" type="string">
+  A Gmail search query, e.g. `"is:unread in:inbox"` or `"from:alice@example.com"`.
+</ParamField>
+
+<ParamField body="maxResults" type="number">
+  Maximum number of messages to return. Defaults to `10`, maximum `50`.
+</ParamField>
+
+<ParamField body="labelIds" type="array">
+  Filter by Gmail label IDs such as `"INBOX"` or `"UNREAD"`.
+</ParamField>
+
+Returns `{ messages: Array<{ id, threadId, subject, from, to, date, snippet }> }`.
+
+### getEmail
+
+Reads a single Gmail message in full, including the plain-text body.
+
+<ParamField body="messageId" type="string" required>
+  The Gmail message ID to retrieve.
+</ParamField>
+
+Returns `{ id, threadId, subject, from, to, date, snippet, body, messageId }`.
+
+## Calendar actions
+
+Import Calendar actions from `@keystrokehq/google/calendar/actions`.
+
+### listEvents
+
+Lists events on a Google Calendar within a time range.
+
+<ParamField body="calendarId" type="string">
+  The calendar to query. Defaults to `"primary"`.
+</ParamField>
+
+<ParamField body="timeMin" type="string" required>
+  ISO 8601 start of the range (inclusive).
+</ParamField>
+
+<ParamField body="timeMax" type="string" required>
+  ISO 8601 end of the range (exclusive).
+</ParamField>
+
+<ParamField body="maxResults" type="number">
+  Maximum events to return. Defaults to `25`, maximum `100`.
+</ParamField>
+
+<ParamField body="query" type="string">
+  Free-text search across event fields.
+</ParamField>
+
+Returns `{ events: Array<{ id, summary, description, start, end, location, attendees, htmlLink, status }> }`.
+
+### createEvent
+
+Schedules a new event on Google Calendar.
+
+<ParamField body="calendarId" type="string">
+  Target calendar. Defaults to `"primary"`.
+</ParamField>
+
+<ParamField body="summary" type="string" required>
+  The event title.
+</ParamField>
+
+<ParamField body="start" type="object" required>
+  Start time as `{ dateTime?, date?, timeZone? }`. Use `dateTime` (ISO 8601) for timed events or `date` (YYYY-MM-DD) for all-day events. `timeZone` accepts an IANA identifier like `"America/New_York"`.
+</ParamField>
+
+<ParamField body="end" type="object" required>
+  End time — same shape as `start`.
+</ParamField>
+
+<ParamField body="description" type="string">
+  Optional event description.
+</ParamField>
+
+<ParamField body="location" type="string">
+  Optional location string.
+</ParamField>
+
+<ParamField body="attendees" type="array">
+  Array of attendee email addresses.
+</ParamField>
+
+<ParamField body="sendUpdates" type="string">
+  Whether to email attendees: `"all"` (default), `"externalOnly"`, or `"none"`.
+</ParamField>
+
+Returns `{ event: { id, summary, description, start, end, location, attendees, htmlLink, status } }`.
+
+### updateEvent
+
+Patches an existing event. Only fields you supply are changed.
+
+<ParamField body="calendarId" type="string">
+  Calendar containing the event. Defaults to `"primary"`.
+</ParamField>
+
+<ParamField body="eventId" type="string" required>
+  The ID of the event to update.
+</ParamField>
+
+<ParamField body="summary" type="string">
+  New title.
+</ParamField>
+
+<ParamField body="start" type="object">
+  New start time — `{ dateTime?, date?, timeZone? }`.
+</ParamField>
+
+<ParamField body="end" type="object">
+  New end time — same shape as `start`.
+</ParamField>
+
+<ParamField body="attendees" type="array">
+  Replacement attendee list (replaces existing attendees).
+</ParamField>
+
+<ParamField body="sendUpdates" type="string">
+  Whether to notify attendees of the change. Defaults to `"all"`.
+</ParamField>
+
+Returns `{ event: { id, summary, description, start, end, location, attendees, htmlLink, status } }`.
+
+### deleteEvent
+
+Cancels and removes an event from Google Calendar.
+
+<ParamField body="calendarId" type="string">
+  Calendar containing the event. Defaults to `"primary"`.
+</ParamField>
+
+<ParamField body="eventId" type="string" required>
+  The ID of the event to delete.
+</ParamField>
+
+<ParamField body="sendUpdates" type="string">
+  Whether to notify attendees of the cancellation. Defaults to `"all"`.
+</ParamField>
+
+Returns `{ deleted: true, eventId: string }`.
+
+### checkAvailability
+
+Returns busy blocks for one or more calendars within a time range, using the Google Calendar free/busy API.
+
+<ParamField body="timeMin" type="string" required>
+  ISO 8601 start of the window to inspect.
+</ParamField>
+
+<ParamField body="timeMax" type="string" required>
+  ISO 8601 end of the window to inspect.
+</ParamField>
+
+<ParamField body="calendarIds" type="array">
+  Calendar IDs to check. Defaults to `["primary"]`.
+</ParamField>
+
+Returns `{ calendars: Array<{ calendarId, busy: Array<{ start, end }> }> }`.
+
+## Code example
+
+The following agent, drawn from the Keystroke example project, has access to the full Gmail and Calendar action set. It triages email, drafts replies, checks availability, and schedules meetings.
+
+```ts src/agents/secretary.ts
+import { defineAgent } from "@keystrokehq/keystroke/agent";
+import {
+  checkAvailability,
+  createEvent,
+  deleteEvent,
+  listEvents,
+  updateEvent,
+} from "@keystrokehq/google/calendar/actions";
+import { getEmail, listEmails, sendEmail } from "@keystrokehq/google/gmail/actions";
+
+export default defineAgent({
+  slug: "secretary",
+  name: "Secretary",
+  description: "Manages Gmail and Google Calendar on your behalf.",
+  systemPrompt: [
+    "You are a capable executive secretary with access to the user's Gmail and Google Calendar.",
+    "Help manage inbox triage, draft and send email, read message threads, check availability,",
+    "and schedule or update calendar events.",
+    "Before sending email or changing calendar events, confirm recipients, times, and wording",
+    "when the request is ambiguous.",
+    "Use ISO 8601 datetimes with the user's timezone when querying or scheduling.",
+    "Summarize clearly and stay concise unless the user asks for detail.",
+  ].join(" "),
+  model: "openai/gpt-5.5",
+  tools: [
+    listEmails,
+    getEmail,
+    sendEmail,
+    listEvents,
+    checkAvailability,
+    createEvent,
+    updateEvent,
+    deleteEvent,
+  ],
+});
+```
+
+## Token management
+
+<Tabs>
+  <Tab title="Per-user OAuth (default)">
+    By default, connecting via `keystroke connect google` stores a token at **organization scope** — all agents in your Keystroke org share the connected Google account. This works well for secretary-style bots acting on behalf of a single user or service account.
+
+    After a successful OAuth callback, Keystroke stores the access token and refresh token, keyed to `google` at organization scope. The framework refreshes the token automatically before each API call when it has expired.
+
+    If your token was stored under a different scope after a Keystroke upgrade, re-run `keystroke connect google` to migrate it.
+  </Tab>
+  <Tab title="Service account">
+    For server-to-server scenarios where user interaction isn't possible, you can store a service account key directly in the credential vault using `keystroke credentials set`. Use domain-wide delegation in Google Workspace to impersonate specific users.
+
+    <Note>
+      Service account credential storage is not part of the built-in Google integration. You'll need to seed the token manually using `keystroke credentials set google`.
+    </Note>
+  </Tab>
+</Tabs>

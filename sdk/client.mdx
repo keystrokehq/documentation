@@ -1,0 +1,266 @@
+---
+title: "createKeystrokeClient: Configure the SDK Client"
+sidebarTitle: "Client Setup"
+description: "createKeystrokeClient creates a typed client for your Keystroke server. Pass a baseUrl and optional auth strategy to connect to local or deployed servers."
+---
+
+`createKeystrokeClient` is the single entry point for the Keystroke SDK. Call it once with your server URL and an optional authentication strategy, and it returns a `KeystrokeClient` object whose properties map directly to server resource namespaces. The underlying HTTP transport is [`ky`](https://github.com/sindresorhus/ky), and auth headers are injected automatically on every request — you never need to manage tokens per-call.
+
+## `createKeystrokeClient(options)`
+
+```typescript
+import { createKeystrokeClient } from '@keystrokehq/sdk';
+
+const client = createKeystrokeClient({
+  baseUrl: 'https://your-keystroke-server.example.com',
+  auth: { type: 'bearer', getToken: () => process.env.KEYSTROKE_TOKEN! },
+});
+```
+
+### Options
+
+<ParamField path="baseUrl" type="string" required>
+  The base URL of your Keystroke server — for example `http://localhost:3001` or `https://keystroke.example.com`. Trailing slashes are stripped automatically. All resource paths are appended to this value.
+</ParamField>
+
+<ParamField path="auth" type="AuthStrategy">
+  Authentication strategy applied to every outgoing request. Defaults to `{ type: 'none' }` when omitted. See the [Auth strategies](#auth-strategies) section below for all supported variants.
+</ParamField>
+
+<ParamField path="ky" type="Options">
+  Optional [`ky` options object](https://github.com/sindresorhus/ky#options) merged into the underlying HTTP client. Use this to set custom timeouts, retry policies, or additional hooks.
+</ParamField>
+
+### Return value
+
+`createKeystrokeClient` returns a `KeystrokeClient` object with the following shape:
+
+```typescript
+type KeystrokeClient = {
+  readonly http: KyInstance;   // underlying ky instance for custom requests
+  health:      HealthResource;
+  connect:     ConnectResource;
+  credentials: CredentialsResource;
+  openapi:     OpenApiResource;
+  agents:      AgentsResource;
+  workflows:   WorkflowsResource;
+  triggers:    TriggersResource;
+};
+```
+
+The `http` property exposes the raw `ky` instance. Use it when you need to make a request to a route not covered by the resource helpers, while still inheriting your configured auth and base URL.
+
+## Auth strategies
+
+The `AuthStrategy` union type has three active variants plus a no-op default.
+
+### No auth (default)
+
+```typescript
+const client = createKeystrokeClient({
+  baseUrl: 'http://localhost:3001',
+  // auth omitted — equivalent to { type: 'none' }
+});
+```
+
+No headers are added. Use this for local development or servers that don't require authentication.
+
+### Bearer token
+
+```typescript
+const client = createKeystrokeClient({
+  baseUrl: 'https://keystroke.example.com',
+  auth: {
+    type: 'bearer',
+    getToken: () => process.env.KEYSTROKE_TOKEN!,
+  },
+});
+```
+
+<ParamField path="auth.type" type='"bearer"' required>
+  Selects bearer token authentication.
+</ParamField>
+
+<ParamField path="auth.getToken" type="() => string | Promise<string | undefined>" required>
+  A function (sync or async) that returns the token. The token is fetched on every request, so rotating tokens are supported. When the function returns `undefined`, no `Authorization` header is added.
+</ParamField>
+
+The `Authorization: Bearer <token>` header is set automatically before each request.
+
+### API key
+
+```typescript
+const client = createKeystrokeClient({
+  baseUrl: 'https://keystroke.example.com',
+  auth: {
+    type: 'apiKey',
+    getKey: () => process.env.KEYSTROKE_API_KEY,
+  },
+});
+```
+
+<ParamField path="auth.type" type='"apiKey"' required>
+  Selects API key authentication.
+</ParamField>
+
+<ParamField path="auth.getKey" type="() => string | undefined" required>
+  A function that returns the API key string. The key is sent as the `x-api-key` request header. When the function returns `undefined`, no header is added.
+</ParamField>
+
+## Handling errors: `KeystrokeError`
+
+All resource methods throw a `KeystrokeError` when the server returns a non-2xx response or when the network request fails entirely. `KeystrokeError` extends the native `Error` class and adds two typed properties:
+
+```typescript
+class KeystrokeError extends Error {
+  readonly status: number;   // HTTP status code (0 for network failures)
+  readonly body: unknown;    // parsed response body, or null
+}
+```
+
+Catch errors with a standard `try/catch` block and narrow by `status` for structured handling:
+
+```typescript
+import { KeystrokeError, createKeystrokeClient } from '@keystrokehq/sdk';
+
+const client = createKeystrokeClient({ baseUrl: 'http://localhost:3001' });
+
+try {
+  const result = await client.agents.prompt('support', { message: 'Hello' });
+  console.log(result);
+} catch (err) {
+  if (err instanceof KeystrokeError) {
+    console.error(`HTTP ${err.status}:`, err.message);
+    // err.body contains the parsed response body for further inspection
+    if (err.status === 404) {
+      console.error('Agent not found');
+    } else if (err.status === 401) {
+      console.error('Authentication required — check your auth strategy');
+    }
+  } else {
+    throw err; // re-throw unexpected errors
+  }
+}
+```
+
+<Note>
+  When a server returns a JSON error body matching Keystroke's `ErrorResponseSchema` (a `message` or `error` field), `KeystrokeError.message` is set to that value. Otherwise the message falls back to `"Request failed with status <N>"`.
+</Note>
+
+### `toKeystrokeError(error)`
+
+If you use `client.http` directly for custom requests, wrap the caught error with `toKeystrokeError` to normalize it into the same typed format:
+
+```typescript
+import { toKeystrokeError } from '@keystrokehq/sdk';
+
+try {
+  const data = await client.http.get('custom/route').json();
+} catch (err) {
+  throw await toKeystrokeError(err);
+}
+```
+
+## Response type guards
+
+Several Keystroke endpoints return different shapes depending on whether processing was synchronous or asynchronous. These type guard functions let you safely narrow the response type at runtime.
+
+### `isQueuedAgentPromptResponse(result)`
+
+Use this guard after `client.agents.prompt(...)` to distinguish a queued 202 response (session ID only) from an inline 200 response (full message list).
+
+```typescript
+import { isQueuedAgentPromptResponse, createKeystrokeClient } from '@keystrokehq/sdk';
+
+const result = await client.agents.prompt('support', { message: 'Hello' });
+
+if (isQueuedAgentPromptResponse(result)) {
+  // result is QueuedAgentPromptResponse — processing async
+  console.log('Session queued:', result.sessionId);
+} else {
+  // result is PromptResponse — inline reply available
+  console.log('Reply:', result.messages);
+}
+```
+
+### `isQueuedRunResponse(result)`
+
+Use this guard after `client.workflows.run(...)` to detect whether a workflow run was queued for background execution.
+
+```typescript
+import { isQueuedRunResponse } from '@keystrokehq/sdk';
+
+const result = await client.workflows.run('send-email', { to: 'user@example.com' });
+
+if (isQueuedRunResponse(result)) {
+  console.log('Run queued with ID:', result.runId);
+} else {
+  console.log('Inline result:', result);
+}
+```
+
+### `isSkippedTriggerResponse(result)`
+
+Use this guard after `client.triggers.webhook(...)` or `client.triggers.poll(...)` to detect when the trigger was intentionally skipped rather than executed.
+
+```typescript
+import { isSkippedTriggerResponse } from '@keystrokehq/sdk';
+
+const result = await client.triggers.poll('hourly-sync');
+
+if (isSkippedTriggerResponse(result)) {
+  console.log('Trigger skipped — no action taken');
+} else {
+  console.log('Trigger fired:', result);
+}
+```
+
+## Full example: connecting to a deployed server
+
+The following example demonstrates a realistic setup connecting to a production Keystroke server using bearer auth, running a workflow, and handling both synchronous and asynchronous outcomes:
+
+```typescript
+import {
+  createKeystrokeClient,
+  isQueuedRunResponse,
+  KeystrokeError,
+} from '@keystrokehq/sdk';
+
+function getToken(): string {
+  const token = process.env.KEYSTROKE_TOKEN;
+  if (!token) throw new Error('KEYSTROKE_TOKEN is not set');
+  return token;
+}
+
+const client = createKeystrokeClient({
+  baseUrl: 'https://keystroke.example.com',
+  auth: {
+    type: 'bearer',
+    getToken,
+  },
+});
+
+async function runOnboarding(userId: string) {
+  // Verify the server is reachable before sending work
+  await client.health.check();
+
+  try {
+    const result = await client.workflows.run('user-onboarding', { userId });
+
+    if (isQueuedRunResponse(result)) {
+      console.log(`Onboarding queued — runId: ${result.runId}`);
+      // Poll or listen via webhooks for completion
+    } else {
+      console.log('Onboarding completed inline:', result);
+    }
+  } catch (err) {
+    if (err instanceof KeystrokeError) {
+      console.error(`Workflow failed [${err.status}]: ${err.message}`);
+    } else {
+      throw err;
+    }
+  }
+}
+
+await runOnboarding('user_abc123');
+```

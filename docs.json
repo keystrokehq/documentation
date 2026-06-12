@@ -1,0 +1,122 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "name": "Keystroke",
+  "theme": "luma",
+  "logo": {
+    "light": "https://media.brand.dev/fb70c2dc-f4f4-4bb7-b590-39a0bc9cc7c2.svg",
+    "dark": "https://media.brand.dev/fb70c2dc-f4f4-4bb7-b590-39a0bc9cc7c2.svg"
+  },
+  "favicon": "https://icons.duckduckgo.com/ip3/web-rust-xi-11.vercel.app.ico",
+  "colors": {
+    "primary": "#040404"
+  },
+  "fonts": {
+    "heading": {
+      "family": "IBM Plex Serif"
+    },
+    "body": {
+      "family": "Inter"
+    }
+  },
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/keystrokehq/keystroke"
+    }
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/agents",
+              "concepts/workflows",
+              "concepts/actions",
+              "concepts/triggers",
+              "concepts/sandboxes"
+            ]
+          },
+          {
+            "group": "Building",
+            "pages": [
+              "building/project-structure",
+              "building/configuration",
+              "building/credentials",
+              "building/skills-and-files"
+            ]
+          },
+          {
+            "group": "Integrations",
+            "pages": [
+              "integrations/overview",
+              "integrations/slack",
+              "integrations/google",
+              "integrations/exa",
+              "integrations/mcp"
+            ]
+          },
+          {
+            "group": "Deployment",
+            "pages": [
+              "deployment/local-development",
+              "deployment/deploying",
+              "deployment/environment-variables"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "CLI Reference",
+        "groups": [
+          {
+            "group": "CLI",
+            "pages": [
+              "cli/overview",
+              "cli/init",
+              "cli/dev-and-start",
+              "cli/deploy",
+              "cli/agents-and-workflows",
+              "cli/credentials",
+              "cli/auth"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "HTTP API",
+            "pages": [
+              "api/overview",
+              "api/agents",
+              "api/workflows",
+              "api/triggers",
+              "api/credentials",
+              "api/openapi"
+            ]
+          },
+          {
+            "group": "SDK",
+            "pages": [
+              "sdk/overview",
+              "sdk/client",
+              "sdk/typescript-sdk"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

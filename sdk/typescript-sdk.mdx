@@ -1,0 +1,698 @@
+---
+title: "SDK Resource Methods: Agents, Workflows, and Triggers"
+sidebarTitle: "Resources"
+description: "Complete reference for all SDK resource methods: agents.prompt, workflows.run, triggers.webhook, triggers.poll, credentials, health, and openapi."
+---
+
+Once you have a `KeystrokeClient` from `createKeystrokeClient`, every server resource is available as a namespace on the client object. Each method validates its inputs and outputs with Zod schemas from `@keystrokehq/shared`, throws a `KeystrokeError` on failure, and returns fully-typed results. This page documents every method on every resource in detail.
+
+<Note>
+  Response types like `PromptResponse`, `QueuedRunResponse`, and `WorkflowRunDetailResponse` are defined in `@keystrokehq/shared`. Import them from there when you need the types in your own code — the SDK does not re-export them.
+</Note>
+
+---
+
+## `client.agents`
+
+The `agents` resource lets you prompt an agent and inspect the conversation sessions it creates.
+
+### `client.agents.prompt(agentId, input)`
+
+Sends a message to an agent and returns either an inline response (HTTP 200) or a queued response (HTTP 202) when the agent runs asynchronously.
+
+```typescript
+const result = await client.agents.prompt('support', {
+  message: 'How do I reset my password?',
+});
+```
+
+<ParamField path="agentId" type="string" required>
+  The slug or ID of the agent to prompt, as defined in your Keystroke server configuration.
+</ParamField>
+
+<ParamField path="input" type="PromptInput" required>
+  The prompt input object. Validated against `PromptInputSchema` before the request is sent.
+</ParamField>
+
+**Returns:** `Promise<AgentPromptResult>` — either a `PromptResponse` (inline) or `QueuedAgentPromptResponse` (async). Use [`isQueuedAgentPromptResponse`](/sdk/client#isqueuedagentpromptresponseresult) to distinguish them.
+
+```typescript
+import { isQueuedAgentPromptResponse } from '@keystrokehq/sdk';
+
+const result = await client.agents.prompt('support', { message: 'Hi!' });
+
+if (isQueuedAgentPromptResponse(result)) {
+  console.log('Queued session ID:', result.sessionId);
+} else {
+  console.log('Messages:', result.messages);
+}
+```
+
+---
+
+### `client.agents.listSessions(agentId, query?)`
+
+Returns a paginated list of sessions for the given agent.
+
+```typescript
+const sessions = await client.agents.listSessions('support', {
+  limit: 20,
+  status: 'completed',
+});
+```
+
+<ParamField path="agentId" type="string" required>
+  The slug or ID of the agent whose sessions you want to list.
+</ParamField>
+
+<ParamField path="query" type="AgentSessionListQuery">
+  Optional filtering and pagination parameters.
+</ParamField>
+
+<ParamField path="query.limit" type="number">
+  Maximum number of sessions to return.
+</ParamField>
+
+<ParamField path="query.cursor" type="string">
+  Pagination cursor from a previous response for fetching the next page.
+</ParamField>
+
+<ParamField path="query.status" type="string">
+  Filter sessions by status (e.g. `"completed"`, `"running"`).
+</ParamField>
+
+<ParamField path="query.source" type="string">
+  Filter sessions by their originating source.
+</ParamField>
+
+**Returns:** `Promise<AgentSessionListResponse>` — the list of sessions validated against `AgentSessionListResponseSchema`.
+
+---
+
+### `client.agents.getSession(agentId, sessionId, query?)`
+
+Retrieves the details of a single agent session by its ID.
+
+```typescript
+const session = await client.agents.getSession('support', 'sess_abc123', {
+  include: 'messages',
+});
+```
+
+<ParamField path="agentId" type="string" required>
+  The slug or ID of the agent that owns the session.
+</ParamField>
+
+<ParamField path="sessionId" type="string" required>
+  The ID of the session to retrieve.
+</ParamField>
+
+<ParamField path="query" type="AgentSessionDetailQuery">
+  Optional query parameters.
+</ParamField>
+
+<ParamField path="query.include" type="string">
+  Comma-separated list of related data to include in the response (e.g. `"messages"`).
+</ParamField>
+
+**Returns:** `Promise<AgentSessionDetailResponse>` — the session detail object validated against `AgentSessionDetailResponseSchema`.
+
+---
+
+## `client.workflows`
+
+The `workflows` resource lets you trigger workflow runs and inspect their history.
+
+### `client.workflows.run(workflowId, input?)`
+
+Starts a workflow run with the provided input payload. Returns the result inline when the workflow completes synchronously (HTTP 200), or a queued run descriptor (HTTP 202) when it runs asynchronously.
+
+```typescript
+const result = await client.workflows.run('send-welcome-email', {
+  userId: 'user_abc123',
+  email: 'user@example.com',
+});
+```
+
+<ParamField path="workflowId" type="string" required>
+  The slug or ID of the workflow to run.
+</ParamField>
+
+<ParamField path="input" type="unknown">
+  Arbitrary JSON-serializable payload passed to the workflow as its input. Defaults to `{}` when omitted.
+</ParamField>
+
+**Returns:** `Promise<unknown | QueuedRunResponse>` — either the inline workflow output or a `QueuedRunResponse` with a `runId`. Use [`isQueuedRunResponse`](/sdk/client#isqueuedrunresponseresult) to narrow the type.
+
+```typescript
+import { isQueuedRunResponse } from '@keystrokehq/sdk';
+
+const result = await client.workflows.run('process-order', { orderId: '123' });
+
+if (isQueuedRunResponse(result)) {
+  console.log('Processing async, run ID:', result.runId);
+} else {
+  console.log('Completed synchronously:', result);
+}
+```
+
+---
+
+### `client.workflows.listRuns(workflowId, query?)`
+
+Returns a paginated list of runs for the specified workflow.
+
+```typescript
+const runs = await client.workflows.listRuns('send-welcome-email', {
+  limit: 50,
+  status: 'failed',
+});
+```
+
+<ParamField path="workflowId" type="string" required>
+  The slug or ID of the workflow.
+</ParamField>
+
+<ParamField path="query" type="WorkflowRunListQuery">
+  Optional filtering and pagination parameters.
+</ParamField>
+
+<ParamField path="query.limit" type="number">
+  Maximum number of runs to return.
+</ParamField>
+
+<ParamField path="query.cursor" type="string">
+  Pagination cursor from a previous response.
+</ParamField>
+
+<ParamField path="query.status" type="string">
+  Filter by run status (e.g. `"completed"`, `"failed"`, `"running"`).
+</ParamField>
+
+<ParamField path="query.trigger" type="string">
+  Filter runs by the trigger that initiated them.
+</ParamField>
+
+**Returns:** `Promise<WorkflowRunListResponse>` — validated against `WorkflowRunListResponseSchema`.
+
+---
+
+### `client.workflows.getRun(workflowId, runId, query?)`
+
+Retrieves the details of a single workflow run.
+
+```typescript
+const run = await client.workflows.getRun('send-welcome-email', 'run_xyz789', {
+  include: 'steps',
+});
+```
+
+<ParamField path="workflowId" type="string" required>
+  The slug or ID of the workflow.
+</ParamField>
+
+<ParamField path="runId" type="string" required>
+  The ID of the run to retrieve.
+</ParamField>
+
+<ParamField path="query" type="WorkflowRunDetailQuery">
+  Optional query parameters.
+</ParamField>
+
+<ParamField path="query.include" type="string">
+  Comma-separated list of related data to include, such as `"steps"`.
+</ParamField>
+
+**Returns:** `Promise<WorkflowRunDetailResponse>` — validated against `WorkflowRunDetailResponseSchema`.
+
+---
+
+## `client.triggers`
+
+The `triggers` resource covers all trigger interaction: inspecting trigger definitions, firing webhook triggers, running poll triggers, and inspecting trigger run history.
+
+### `client.triggers.list(query?)`
+
+Returns the list of all trigger attachments registered on the server, optionally filtered by endpoint.
+
+```typescript
+const triggers = await client.triggers.list();
+
+// Filter by endpoint key
+const filtered = await client.triggers.list({ endpoint: 'github-push' });
+```
+
+<ParamField path="query" type="TriggerListQuery">
+  Optional filtering parameters.
+</ParamField>
+
+<ParamField path="query.endpoint" type="string">
+  When provided, filters the returned list to triggers whose endpoint matches this value.
+</ParamField>
+
+**Returns:** `Promise<TriggerListResponse>` — validated against `TriggerListResponseSchema`.
+
+---
+
+### `client.triggers.get(id)`
+
+Retrieves a single trigger attachment by its ID, or a list of triggers matching the given identifier when more than one attachment shares the same key.
+
+```typescript
+const trigger = await client.triggers.get('github-push');
+```
+
+<ParamField path="id" type="string" required>
+  The ID or key of the trigger attachment to retrieve.
+</ParamField>
+
+**Returns:** `Promise<TriggerDetailResponse | TriggerListResponse>` — a single detail record or a list when multiple attachments match the identifier.
+
+---
+
+### `client.triggers.webhookUrl(id)`
+
+Resolves and returns the webhook URL for a trigger attachment. Throws a `KeystrokeError` with status 404 if no webhook URL is found for the given ID.
+
+```typescript
+const url = await client.triggers.webhookUrl('github-push');
+console.log('POST to:', url);
+```
+
+<ParamField path="id" type="string" required>
+  The ID or key of the trigger attachment whose webhook URL you want to retrieve.
+</ParamField>
+
+**Returns:** `Promise<string>` — the resolved webhook URL.
+
+---
+
+### `client.triggers.webhook(endpoint, body?, options?)`
+
+Sends a POST request to a webhook trigger endpoint. The `endpoint` argument accepts either a raw path or a fully-qualified trigger key — leading slashes and the `triggers/` prefix are normalized automatically.
+
+```typescript
+const result = await client.triggers.webhook('github-push', {
+  ref: 'refs/heads/main',
+  repository: { full_name: 'org/repo' },
+});
+```
+
+<ParamField path="endpoint" type="string" required>
+  The trigger endpoint key (e.g. `"github-push"`) or path. The value is normalized so `"triggers/github-push"` and `"/triggers/github-push"` are treated identically.
+</ParamField>
+
+<ParamField path="body" type="unknown">
+  The webhook payload to send as JSON. Defaults to `{}`.
+</ParamField>
+
+<ParamField path="options" type="TriggerWebhookOptions">
+  Optional per-request options.
+</ParamField>
+
+<ParamField path="options.token" type="string">
+  Webhook API key appended as `?token=` when server auth is enabled. Bearer and `x-api-key` strategies configured on the client also work and take precedence.
+</ParamField>
+
+**Returns:** `Promise<unknown>` — the server's response body. Use [`isSkippedTriggerResponse`](/sdk/client#isskippedtriggerresponseresult) to detect intentionally skipped executions.
+
+---
+
+### `client.triggers.poll(id, options?)`
+
+Triggers a poll-based trigger, optionally scoped to specific workflows or attachments. Use `options.group = true` to target the poll group route (`/triggers/polls/{id}/run`) instead of a single attachment.
+
+```typescript
+// Fire a single poll attachment
+const result = await client.triggers.poll('hourly-data-sync');
+
+// Fire a poll group
+const groupResult = await client.triggers.poll('batch-jobs', { group: true });
+```
+
+<ParamField path="id" type="string" required>
+  The ID or key of the poll trigger attachment (or group).
+</ParamField>
+
+<ParamField path="options" type="PollRunOptions">
+  Optional options that extend `PollRunRequest`.
+</ParamField>
+
+<ParamField path="options.group" type="boolean">
+  When `true`, sends the request to the poll group route (`/triggers/polls/{id}/run`) rather than the single-attachment route (`/triggers/{id}/poll`). Defaults to `false`.
+</ParamField>
+
+<ParamField path="options.workflows" type="string[]">
+  Restrict execution to the specified workflow slugs or IDs.
+</ParamField>
+
+<ParamField path="options.attachments" type="string[]">
+  Restrict execution to the specified attachment IDs.
+</ParamField>
+
+**Returns:** `Promise<unknown>` — the response body validated against `PollRunResponseSchema`.
+
+---
+
+### `client.triggers.runPollGroup(pollId, options?)`
+
+Convenience wrapper around `triggers.poll` that always targets the poll group route (`/triggers/polls/{id}/run`). Equivalent to calling `triggers.poll(pollId, { ...options, group: true })`.
+
+```typescript
+const result = await client.triggers.runPollGroup('batch-jobs', {
+  workflows: ['process-orders'],
+});
+```
+
+<ParamField path="pollId" type="string" required>
+  The ID of the poll group to run.
+</ParamField>
+
+<ParamField path="options" type="PollRunRequest">
+  Optional body parameters inherited from `PollRunRequest`.
+</ParamField>
+
+<ParamField path="options.workflows" type="string[]">
+  Restrict execution to the specified workflow slugs or IDs.
+</ParamField>
+
+<ParamField path="options.attachments" type="string[]">
+  Restrict execution to the specified attachment IDs.
+</ParamField>
+
+**Returns:** `Promise<unknown>` — the response body validated against `PollRunResponseSchema`.
+
+---
+
+### `client.triggers.listRuns(attachmentId, query?)`
+
+Returns a paginated list of runs for a trigger attachment.
+
+```typescript
+const runs = await client.triggers.listRuns('hourly-data-sync', {
+  limit: 25,
+  triggerType: 'poll',
+});
+```
+
+<ParamField path="attachmentId" type="string" required>
+  The ID of the trigger attachment.
+</ParamField>
+
+<ParamField path="query" type="TriggerRunListQuery">
+  Optional filtering and pagination parameters.
+</ParamField>
+
+<ParamField path="query.limit" type="number">
+  Maximum number of runs to return.
+</ParamField>
+
+<ParamField path="query.cursor" type="string">
+  Pagination cursor from a previous response.
+</ParamField>
+
+<ParamField path="query.triggerType" type="string">
+  Filter by trigger type (e.g. `"poll"`, `"webhook"`).
+</ParamField>
+
+**Returns:** `Promise<TriggerRunListResponse>` — validated against `TriggerRunListResponseSchema`.
+
+---
+
+### `client.triggers.getRun(attachmentId, runId, query?)`
+
+Retrieves the details of a single trigger run.
+
+```typescript
+const run = await client.triggers.getRun('hourly-data-sync', 'run_def456', {
+  include: 'steps',
+});
+```
+
+<ParamField path="attachmentId" type="string" required>
+  The ID of the trigger attachment that owns the run.
+</ParamField>
+
+<ParamField path="runId" type="string" required>
+  The ID of the run to retrieve.
+</ParamField>
+
+<ParamField path="query" type="TriggerRunDetailQuery">
+  Optional query parameters.
+</ParamField>
+
+<ParamField path="query.include" type="string">
+  Comma-separated list of related data to include in the response.
+</ParamField>
+
+**Returns:** `Promise<TriggerRunDetailResponse>` — validated against `TriggerRunDetailResponseSchema`.
+
+---
+
+## `client.connect`
+
+The `connect` resource provides helpers for OAuth provider discovery and authorization. Use it to list available OAuth integrations and to obtain authorization URLs that redirect users through a provider's consent flow.
+
+### `client.connect.listProviders()`
+
+Returns the list of all OAuth providers configured on the Keystroke server.
+
+```typescript
+const providers = await client.connect.listProviders();
+providers.forEach((p) => console.log(p.name, p.key));
+```
+
+**Returns:** `Promise<ConnectProvider[]>` — the array of provider records from `ConnectProvidersResponseSchema`.
+
+---
+
+### `client.connect.getAuthorizeUrl(path)`
+
+Fetches an authorization URL for the given provider path. The path is the provider-specific authorize route returned by `listProviders`.
+
+```typescript
+const { url } = await client.connect.getAuthorizeUrl('/connect/github/authorize');
+// Redirect the user to `url` to begin the OAuth flow
+```
+
+<ParamField path="path" type="string" required>
+  The provider authorize path (e.g. `\"/connect/github/authorize\"`). Leading slashes are stripped automatically before the request is sent.
+</ParamField>
+
+**Returns:** `Promise<ConnectAuthorizeUrlResponse>` — validated against `ConnectAuthorizeUrlResponseSchema`.
+
+---
+
+## `client.credentials`
+
+The `credentials` resource manages credential instances on the Keystroke server. Credential instances store external service credentials that agents and workflows can reference by key.
+
+### `client.credentials.listInstances(options?)`
+
+Returns all credential instances, optionally filtered by key.
+
+```typescript
+const { instances } = await client.credentials.listInstances({ key: 'openai' });
+```
+
+<ParamField path="options.key" type="string">
+  When provided, filters the returned list to instances whose `key` matches this value.
+</ParamField>
+
+**Returns:** `Promise<CredentialInstanceListResponse>` — validated against `CredentialInstanceListResponseSchema`.
+
+---
+
+### `client.credentials.createInstance(body)`
+
+Creates a new credential instance.
+
+```typescript
+const instance = await client.credentials.createInstance({
+  key: 'openai',
+  name: 'OpenAI Production',
+  values: { apiKey: 'sk-...' },
+});
+```
+
+<ParamField path="body" type="CreateCredentialInstanceBody" required>
+  The credential instance payload, validated against `CreateCredentialInstanceBodySchema` before the request is sent.
+</ParamField>
+
+**Returns:** `Promise<CredentialInstanceRecord>` — the newly created instance, validated against `CredentialInstanceRecordSchema`.
+
+---
+
+### `client.credentials.updateInstance(id, body)`
+
+Updates an existing credential instance by its ID.
+
+```typescript
+const updated = await client.credentials.updateInstance('cred_abc123', {
+  values: { apiKey: 'sk-new-key...' },
+});
+```
+
+<ParamField path="id" type="string" required>
+  The ID of the credential instance to update.
+</ParamField>
+
+<ParamField path="body" type="UpdateCredentialInstanceBody" required>
+  The fields to update, validated against `UpdateCredentialInstanceBodySchema`.
+</ParamField>
+
+**Returns:** `Promise<CredentialInstanceRecord>` — the updated instance record.
+
+---
+
+### `client.credentials.deleteInstance(id)`
+
+Deletes a credential instance by its ID.
+
+```typescript
+await client.credentials.deleteInstance('cred_abc123');
+```
+
+<ParamField path="id" type="string" required>
+  The ID of the credential instance to delete.
+</ParamField>
+
+**Returns:** `Promise<void>`
+
+---
+
+## `client.health`
+
+### `client.health.check()`
+
+Performs a liveness check against the server's `/health` endpoint. Use this to verify the server is reachable before sending work, or as part of a startup routine.
+
+```typescript
+const status = await client.health.check();
+console.log(status);
+```
+
+**Returns:** `Promise<HealthResponse>` — the parsed health response validated against `HealthResponseSchema`. Throws `KeystrokeError` if the server is unreachable or returns a non-2xx status.
+
+---
+
+## `client.openapi`
+
+### `client.openapi.fetch()`
+
+Fetches the live OpenAPI document from the server. The document reflects the currently registered agents, workflows, and triggers.
+
+```typescript
+const spec = await client.openapi.fetch();
+console.log(spec.info?.title);
+```
+
+**Returns:** `Promise<Record<string, unknown>>` — the raw OpenAPI JSON object. No schema validation is applied beyond confirming the response is valid JSON.
+
+---
+
+## Complete example
+
+The following example demonstrates using multiple resources together with proper typing, error handling, and response narrowing:
+
+```typescript
+import {
+  createKeystrokeClient,
+  isQueuedAgentPromptResponse,
+  isQueuedRunResponse,
+  isSkippedTriggerResponse,
+  KeystrokeError,
+} from '@keystrokehq/sdk';
+
+const client = createKeystrokeClient({
+  baseUrl: process.env.KEYSTROKE_URL ?? 'http://localhost:3001',
+  auth: {
+    type: 'bearer',
+    getToken: () => process.env.KEYSTROKE_TOKEN ?? '',
+  },
+});
+
+async function main() {
+  // 1. Confirm the server is up
+  const health = await client.health.check();
+  console.log('Server health:', health);
+
+  // 2. Prompt an agent and handle both sync and async responses
+  try {
+    const agentResult = await client.agents.prompt('support', {
+      message: 'What is the status of order #1234?',
+    });
+
+    if (isQueuedAgentPromptResponse(agentResult)) {
+      console.log('Agent is processing — session ID:', agentResult.sessionId);
+
+      // Retrieve the session later when complete
+      const session = await client.agents.getSession('support', agentResult.sessionId);
+      console.log('Session status:', session.status);
+    } else {
+      console.log('Immediate reply:', agentResult.messages);
+    }
+  } catch (err) {
+    if (err instanceof KeystrokeError) {
+      console.error(`Agent error [${err.status}]: ${err.message}`);
+    }
+  }
+
+  // 3. Run a workflow and handle async queuing
+  try {
+    const workflowResult = await client.workflows.run('notify-team', {
+      event: 'order.shipped',
+      orderId: '1234',
+    });
+
+    if (isQueuedRunResponse(workflowResult)) {
+      console.log('Workflow queued — run ID:', workflowResult.runId);
+
+      // Inspect the run details
+      const run = await client.workflows.getRun('notify-team', workflowResult.runId);
+      console.log('Run status:', run.status);
+    } else {
+      console.log('Workflow result:', workflowResult);
+    }
+  } catch (err) {
+    if (err instanceof KeystrokeError) {
+      console.error(`Workflow error [${err.status}]: ${err.message}`);
+    }
+  }
+
+  // 4. Fire a webhook trigger
+  try {
+    const webhookResult = await client.triggers.webhook('order-shipped', {
+      orderId: '1234',
+      carrier: 'UPS',
+    });
+
+    if (isSkippedTriggerResponse(webhookResult)) {
+      console.log('Trigger skipped — no workflows attached or conditions not met');
+    } else {
+      console.log('Trigger fired:', webhookResult);
+    }
+  } catch (err) {
+    if (err instanceof KeystrokeError) {
+      console.error(`Trigger error [${err.status}]: ${err.message}`);
+    }
+  }
+
+  // 5. List and inspect recent workflow runs
+  const runs = await client.workflows.listRuns('notify-team', { limit: 10 });
+  console.log(`Found ${runs.items.length} recent runs`);
+
+  // 6. Manage credentials
+  const { instances } = await client.credentials.listInstances({ key: 'sendgrid' });
+  if (instances.length === 0) {
+    const newInstance = await client.credentials.createInstance({
+      key: 'sendgrid',
+      name: 'SendGrid Production',
+      values: { apiKey: process.env.SENDGRID_API_KEY! },
+    });
+    console.log('Created credential:', newInstance.id);
+  }
+}
+
+main().catch(console.error);
+```

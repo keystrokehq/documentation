@@ -1,0 +1,181 @@
+---
+title: "Authenticate the Keystroke CLI with the Platform"
+sidebarTitle: "auth"
+description: "Use keystroke auth to log in to the Keystroke platform, check your session status, and log out. Authentication is required for deploy and cloud commands."
+---
+
+The `keystroke auth` command group handles authentication with the Keystroke platform. Logging in lets you deploy projects, manage credentials, and run `agent`, `workflow`, and `trigger` commands against cloud-hosted projects. You only need to authenticate once — the CLI persists your session in the OS keychain and refreshes it automatically.
+
+<Note>
+  Authentication is **not** required for local development. `keystroke dev`, `keystroke start`, `keystroke build`, and `keystroke health` (against a local server) all work without logging in.
+</Note>
+
+---
+
+## `auth login`
+
+Authenticates via a browser-based device flow. The CLI opens your browser to the Keystroke web dashboard, where you approve the login. Once approved, the access token is stored securely in your OS keychain — never in a plaintext file.
+
+```bash
+keystroke auth login
+```
+
+```bash
+# Log in to the default production environment
+keystroke auth login
+
+# Log in to a self-hosted or local dev environment
+keystroke auth login --web-url http://localhost:3000
+
+# Explicitly specify both endpoints
+keystroke auth login \
+  --web-url https://app.keystroke.ai \
+  --platform-url https://api.keystroke.ai
+
+# Log in and set a specific active organization
+keystroke auth login --org my-org-slug
+```
+
+On success, the CLI prints your name, email, and the active organization:
+
+```
+Logged in as Jane Smith (jane@example.com) — organization Acme Corp
+```
+
+### Flags
+
+<ParamField path="--web-url" type="string" default="https://app.keystroke.ai">
+  The web dashboard origin used for device login and session checks. Omit this flag to always reset to the production default (`https://app.keystroke.ai`), even if a previous login pointed at a different URL.
+
+  For local platform development: `--web-url http://localhost:3000`
+</ParamField>
+
+<ParamField path="--platform-url" type="string">
+  The platform API origin used for direct API calls from the CLI. When omitted, it is automatically derived from `--web-url` (local: `http://localhost:3002`, production: `https://api.keystroke.ai`).
+</ParamField>
+
+<ParamField path="--org" type="string">
+  Active organization slug to switch to after login. When omitted, the organization associated with the device login approval is used.
+</ParamField>
+
+### URL settings reference
+
+| Setting | Default | Purpose |
+|---|---|---|
+| `webUrl` | `https://app.keystroke.ai` | Web dashboard — device login and session verification |
+| `platformUrl` | `https://api.keystroke.ai` | Platform API — used by CLI platform commands |
+| `serverUrl` | `http://localhost:3001` | Local keystroke server — used by `dev` / `start` |
+
+`auth login` persists `webUrl` and `platformUrl` to `~/.keystroke`. It does **not** change `serverUrl`, so local project commands continue to target your dev server after authenticating.
+
+---
+
+## `auth status`
+
+Checks whether you are currently logged in and prints session details as JSON.
+
+```bash
+keystroke auth status
+```
+
+**Authenticated output:**
+
+```json
+{
+  "authenticated": true,
+  "webUrl": "https://app.keystroke.ai",
+  "user": {
+    "id": "user_abc123",
+    "name": "Jane Smith",
+    "email": "jane@example.com"
+  },
+  "activeOrganizationId": "org_xyz789",
+  "activeOrganization": "Acme Corp"
+}
+```
+
+**Not authenticated output:**
+
+```json
+{
+  "authenticated": false,
+  "webUrl": "https://app.keystroke.ai",
+  "platformUrl": "https://api.keystroke.ai"
+}
+```
+
+When not authenticated, the command exits with code `1` — useful for scripting pre-flight checks before a deploy.
+
+### Flags
+
+<ParamField path="--web-url" type="string">
+  Override the web dashboard URL to check against. Defaults to the value stored in `~/.keystroke`.
+</ParamField>
+
+---
+
+## `auth logout`
+
+Clears the stored access token from the OS keychain and prints a confirmation.
+
+```bash
+keystroke auth logout
+```
+
+```json
+{
+  "authenticated": false,
+  "webUrl": "https://app.keystroke.ai",
+  "platformUrl": "https://api.keystroke.ai"
+}
+```
+
+After logging out, any command that requires platform authentication will fail until you run `keystroke auth login` again.
+
+### Flags
+
+<ParamField path="--web-url" type="string">
+  Override the web dashboard URL to clear credentials for. Defaults to the value stored in `~/.keystroke`.
+</ParamField>
+
+---
+
+## Where credentials are stored
+
+The CLI separates secret and non-secret storage deliberately:
+
+<CardGroup cols={2}>
+  <Card title="OS keychain" icon="lock">
+    Bearer tokens (access tokens) are stored in your operating system's secure credential store:
+    - **macOS** — Keychain
+    - **Windows** — Credential Manager
+    - **Linux** — Secret Service (e.g. GNOME Keyring)
+
+    Tokens are never written to disk as plaintext.
+  </Card>
+  <Card title="~/.keystroke config file" icon="file">
+    Non-secret settings — `webUrl`, `platformUrl`, `serverUrl`, `activeOrganizationId`, `activeProjectId`, and `apiTarget` — are stored in a plain JSON config file at `~/.keystroke`.
+
+    This file is safe to inspect and edit manually. It contains no secrets.
+  </Card>
+</CardGroup>
+
+---
+
+## Switching organizations
+
+After logging in, you can switch your active organization without re-authenticating:
+
+```bash
+keystroke config use org <org-slug>
+```
+
+Or interactively:
+
+```bash
+keystroke config org
+# Lists all organizations you belong to, then:
+keystroke config use org my-other-org
+```
+
+The active organization is stored in `~/.keystroke` and used as the default scope for `agent list`, `workflow list`, `credentials set`, and other organization-scoped commands.

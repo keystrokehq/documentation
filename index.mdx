@@ -1,0 +1,52 @@
+---
+title: "Keystroke: TypeScript Meta-Framework for AI Agents"
+sidebarTitle: "Home"
+description: "Keystroke is a TypeScript meta-framework for building AI agents, workflows, and triggers with file-based conventions, a CLI, and a hosted platform."
+---
+
+Keystroke is a meta-framework for building AI agents, workflows, and triggers in TypeScript — comparable to how Next.js wraps React, Keystroke wraps Hono and a production-ready agent runtime. You write files in `agents/`, `workflows/`, and `triggers/`; the framework discovers them, mounts HTTP routes, and handles execution. Ship your first agent in minutes, then scale to durable multi-step workflows and event-driven triggers without changing how you write code.
+
+## Explore the docs
+
+<CardGroup cols={3}>
+  <Card title="Introduction" icon="book-open" href="/introduction">
+    Learn what Keystroke is, what you can build, and how its core concepts fit together.
+  </Card>
+  <Card title="Quickstart" icon="bolt" href="/quickstart">
+    Scaffold a project, define an agent, and invoke it over HTTP in under 5 minutes.
+  </Card>
+  <Card title="Core Concepts" icon="layer-group" href="/concepts">
+    Deep-dive into Actions, Agents, Workflows, and Triggers — the four building blocks.
+  </Card>
+  <Card title="CLI Reference" icon="terminal" href="/cli">
+    Every `keystroke` command: `init`, `dev`, `start`, `build`, `auth`, and more.
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/overview">
+    HTTP routes, request schemas, and the OpenAPI spec auto-generated from your project.
+  </Card>
+  <Card title="Integrations" icon="plug" href="/integrations">
+    Connect Slack, Google, Exa, and other services as first-class plugins.
+  </Card>
+</CardGroup>
+
+## How it works
+
+Every Keystroke project follows the same three steps — from a blank directory to a running agent server.
+
+<Steps>
+  <Step title="Scaffold your project">
+    Run `keystroke init my-app` to generate a ready-to-run project with a `keystroke.config.ts`, a `src/` directory, and all required dependencies pre-configured.
+  </Step>
+  <Step title="Define agents, workflows, and triggers">
+    Drop TypeScript files into `src/agents/`, `src/workflows/`, and `src/triggers/`. Keystroke discovers them automatically — no manual route registration required. Use `defineAgent`, `defineWorkflow`, and `defineWebhookSource` (or `defineCronSource` / `definePollSource`) to declare your logic.
+  </Step>
+  <Step title="Run locally or deploy to the platform">
+    Start a local dev server with `keystroke dev` (watch mode, port 3001) or `keystroke start` for a stable build. When you're ready to go to production, `keystroke deploy` pushes your project to the Keystroke platform, which manages routing, credentials, and scaling.
+  </Step>
+</Steps>
+
+## TypeScript SDK
+
+<Note>
+  Keystroke ships a typed HTTP client — `@keystrokehq/sdk` — so you can invoke agents and workflows from any TypeScript codebase without hand-writing `fetch` calls. Import it from your frontend, another service, or a test suite. See the [API Reference](/api/overview) for usage.
+</Note>

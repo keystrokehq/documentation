@@ -1,0 +1,228 @@
+---
+title: "Exa Search Integration for Keystroke Agents"
+sidebarTitle: "Exa"
+description: "Add powerful web and semantic search to your agents with the Exa integration. Import individual search actions or mount the full Exa MCP server."
+---
+
+The Exa integration brings web and semantic search into your Keystroke agents through a clean, typed API. You can import individual action primitives for fine-grained control — or mount either of Exa's hosted MCP servers so the model can call web search and page fetch tools directly. Both modes share the same `exa` credential, which holds your Exa API key.
+
+## Setup
+
+<Steps>
+  <Step title="Install the package">
+    ```bash
+    pnpm add @keystrokehq/exa
+    ```
+  </Step>
+
+  <Step title="Get an Exa API key">
+    Create an account and generate a key at [dashboard.exa.ai/api-keys](https://dashboard.exa.ai/api-keys).
+  </Step>
+
+  <Step title="Store the credential">
+    Set the API key in the Keystroke credential vault at organization scope:
+
+    ```bash
+    keystroke credentials set exa --scope org --set apiKey=YOUR_EXA_API_KEY
+    ```
+
+    All Exa actions and MCP definitions resolve `credentials.exa.apiKey` from the vault at runtime — no additional configuration required.
+  </Step>
+</Steps>
+
+<Note>
+  The Exa integration does **not** require an entry in the `integrations` array of `keystroke.config.ts`. It is a pure action/credential package — there is no OAuth flow or gateway to mount. Simply install, store the key, and import actions.
+</Note>
+
+## Available actions
+
+Import actions from `@keystrokehq/exa/actions`.
+
+### exa-search
+
+Searches the web with Exa. Supports category verticals, date filters, domain allow/deny lists, and three content modes.
+
+<ParamField body="query" type="string" required>
+  A natural-language search query.
+</ParamField>
+
+<ParamField body="type" type="string">
+  Search profile: `"auto"` (default), `"neural"`, `"keyword"`, `"deep"`, or `"deep-reasoning"`.
+</ParamField>
+
+<ParamField body="category" type="string">
+  Vertical index — one of `"company"`, `"people"`, `"research paper"`, `"news"`, `"personal site"`, or `"financial report"`.
+</ParamField>
+
+<ParamField body="numResults" type="number">
+  Results to return. Defaults to `10`, maximum `100`.
+</ParamField>
+
+<ParamField body="includeDomains" type="array">
+  Restrict results to these domains.
+</ParamField>
+
+<ParamField body="excludeDomains" type="array">
+  Exclude results from these domains.
+</ParamField>
+
+<ParamField body="startPublishedDate" type="string">
+  ISO 8601 published-after filter.
+</ParamField>
+
+<ParamField body="endPublishedDate" type="string">
+  ISO 8601 published-before filter.
+</ParamField>
+
+<ParamField body="highlights" type="boolean">
+  Return token-efficient page excerpts. Defaults to `true` — recommended for most agents.
+</ParamField>
+
+<ParamField body="text" type="boolean">
+  Include full page markdown text per result.
+</ParamField>
+
+<ParamField body="summary" type="boolean">
+  Include an LLM-generated summary per result.
+</ParamField>
+
+Returns `{ requestId?, searchType?, results[], costDollars? }`.
+
+### exa-search-structured
+
+Runs a search and synthesizes results into a structured JSON object matching the schema you provide. Best used with `type: "deep"` or `type: "deep-reasoning"`.
+
+<ParamField body="query" type="string" required>
+  Natural-language search query.
+</ParamField>
+
+<ParamField body="outputSchema" type="object" required>
+  A JSON Schema object describing the structure of the synthesized output.
+</ParamField>
+
+<ParamField body="type" type="string">
+  Defaults to `"deep"`.
+</ParamField>
+
+All other parameters are the same as `exa-search`. Returns `{ results[], output?: { content, grounding? }, costDollars? }`.
+
+### exa-get-contents
+
+Extracts content from one or more known URLs. Useful when you already have a URL and need to read its text.
+
+<ParamField body="urls" type="array" required>
+  URLs to extract content from (1–100 items).
+</ParamField>
+
+<ParamField body="highlights" type="boolean">
+  Return token-efficient excerpts.
+</ParamField>
+
+<ParamField body="text" type="boolean">
+  Return full page markdown.
+</ParamField>
+
+<ParamField body="summary" type="boolean">
+  Return an LLM summary per URL.
+</ParamField>
+
+Returns `{ results[], statuses[] }`. Check `statuses` for per-URL errors — the API returns HTTP 200 even when individual URLs fail.
+
+### exa-answer
+
+Answers a natural-language question with grounded citations from the web.
+
+<ParamField body="query" type="string" required>
+  A natural-language question.
+</ParamField>
+
+<ParamField body="includeCitationText" type="boolean">
+  Include the full source text on each citation. Defaults to `false`.
+</ParamField>
+
+<ParamField body="outputSchema" type="object">
+  JSON Schema for a structured answer rather than a plain string.
+</ParamField>
+
+Returns `{ answer, citations[], costDollars? }`.
+
+### exa-get-context
+
+Retrieves token-efficient documentation and code snippets for coding agents (Exa Code). Ideal for agents that answer how-to questions or explain APIs.
+
+<ParamField body="query" type="string" required>
+  A code, API, or how-to question. Up to 2000 characters.
+</ParamField>
+
+<ParamField body="tokensNum" type="number | string">
+  Maximum output tokens, or `"dynamic"` for automatic sizing. Defaults to `"dynamic"`.
+</ParamField>
+
+Returns `{ response: string, resultsCount?, outputTokens?, costDollars? }`.
+
+## Two usage modes
+
+<Tabs>
+  <Tab title="Import actions directly">
+    Import individual Exa actions and add them to an agent's `tools` array. This gives you full TypeScript types and Zod validation at the action boundary.
+
+    ```ts src/agents/researcher.ts
+    import { defineAgent } from "@keystrokehq/keystroke/agent";
+    import {
+      exaAnswer,
+      exaGetContents,
+      exaSearch,
+      exaSearchStructured,
+    } from "@keystrokehq/exa/actions";
+
+    export default defineAgent({
+      slug: "researcher",
+      systemPrompt: [
+        "You research inbound signups for a sales pipeline.",
+        "Use public knowledge and reasonable inference from the company name and email domain.",
+        "Stay concise; no filler. If data is thin, say so and note what you tried.",
+      ].join(" "),
+      model: "moonshotai/kimi-k2.5",
+      tools: [exaSearch, exaAnswer, exaSearchStructured, exaGetContents],
+    });
+    ```
+  </Tab>
+  <Tab title="Mount the Exa MCP server">
+    Import `exaSearchMcp` or `exaWebsetsMcp` from `@keystrokehq/exa/mcp` and add them to `tools`. Keystroke connects to the MCP server over HTTP when the agent starts, resolves the API key, and injects it as an `x-api-key` header.
+
+    ```ts src/agents/web-agent.ts
+    import { defineAgent } from "@keystrokehq/keystroke/agent";
+    import { exaSearchMcp, exaWebsetsMcp } from "@keystrokehq/exa/mcp";
+
+    export default defineAgent({
+      slug: "web-agent",
+      systemPrompt: "You can search the web and manage Exa websets.",
+      model: "anthropic/claude-sonnet-4-6",
+      // Connects to https://mcp.exa.ai/mcp (web_search_exa, web_fetch_exa, …)
+      // and https://websetsmcp.exa.ai/mcp (list_websets, …)
+      tools: [exaSearchMcp, exaWebsetsMcp],
+    });
+    ```
+
+    The MCP tools exposed by `exaSearchMcp` include `web_search_exa` and `web_fetch_exa`. `exaWebsetsMcp` provides Exa Websets management tools like `list_websets`.
+
+    | Export | Server URL | Docs |
+    |--------|-----------|------|
+    | `exaSearchMcp` | `https://mcp.exa.ai/mcp` | [Exa MCP](https://exa.ai/docs/reference/exa-mcp) |
+    | `exaWebsetsMcp` | `https://websetsmcp.exa.ai/mcp` | [Websets MCP](https://exa.ai/docs/reference/websets-mcp) |
+  </Tab>
+</Tabs>
+
+## Action key reference
+
+| Export | Action key | Description |
+|--------|-----------|-------------|
+| `exaSearch` | `exa-search` | Web search with filters, highlights, and content modes |
+| `exaSearchStructured` | `exa-search-structured` | Search with structured JSON synthesis via `outputSchema` |
+| `exaGetContents` | `exa-get-contents` | Extract content from known URLs |
+| `exaAnswer` | `exa-answer` | Grounded Q&A with citations |
+| `exaGetContext` | `exa-get-context` | Token-efficient docs and code snippets for coding agents |
+
+<Tip>
+  For most research agents, `exaSearch` with `highlights: true` (the default) is the most token-efficient choice. Use `exaAnswer` when you want a single, attributed answer rather than a list of sources. Use `exaGetContext` when your agent primarily answers coding or API questions.
+</Tip>

@@ -1,0 +1,197 @@
+---
+title: "Workflows: Durable Orchestration of Actions and Agents"
+sidebarTitle: "Workflows"
+description: "Workflows orchestrate sequences of actions and agents with reliable, resumable execution. Define typed inputs and outputs, chain steps, and handle errors gracefully."
+---
+
+Workflows are the orchestration layer of Keystroke. You define a typed `run` function that calls actions as steps, invokes agents, branches on results, and returns a structured output. What makes workflows special is durable execution: every step result is recorded, so if a run is interrupted and replayed, completed steps are skipped and their cached outputs are returned rather than re-executed. This makes workflows safe to retry and easy to reason about.
+
+## Defining a workflow
+
+Export a default `defineWorkflow` call from any file under `src/workflows/`. The server discovers it and mounts it at `POST /workflows/{slug}`.
+
+```typescript
+import { defineWorkflow } from "@keystrokehq/keystroke/workflow";
+import { z } from "zod";
+import support from "../agents/support";
+import { pickAssignee } from "../actions/pick-assignee";
+import { triage, TriageOutput } from "../actions/triage";
+import { lastAssistantText } from "../lib/messages";
+
+const Input = z.object({
+  message: z.string(),
+  sender: z.string(),
+  channel: z.enum(["email", "chat", "sms"]).default("email"),
+});
+
+const Output = z.object({
+  handled: z.boolean(),
+  priority: z.enum(["low", "normal", "high", "urgent"]),
+  tags: z.array(z.string()),
+  reply: z.string().optional(),
+  escalatedTo: z.string().optional(),
+});
+
+const REWRITE_PASSES = [
+  "Write a concise first draft reply.",
+  "Make it warmer and more empathetic.",
+  "Shorten to 2-3 sentences max.",
+] as const;
+
+export default defineWorkflow({
+  slug: "incoming-message",
+  name: "Incoming message",
+  description: "Triage incoming support messages, draft replies, or escalate to a human.",
+  input: Input,
+  output: Output,
+  async run(input) {
+    const triageResult: z.infer<typeof TriageOutput> = await triage.run(input);
+
+    if (triageResult.needsHuman) {
+      const { assignee } = await pickAssignee.run({
+        channel: input.channel,
+        triage: triageResult,
+      });
+
+      return {
+        handled: false,
+        priority: triageResult.priority,
+        tags: triageResult.tags,
+        escalatedTo: assignee,
+      };
+    }
+
+    let reply: string | undefined;
+
+    for (const instruction of REWRITE_PASSES) {
+      const result = await support.prompt({
+        message: [instruction, `Original:\n${input.message}`, reply ? `Draft:\n${reply}` : ""]
+          .filter(Boolean)
+          .join("\n\n"),
+      });
+      reply = lastAssistantText(result) || reply || input.message;
+    }
+
+    return {
+      handled: true,
+      priority: triageResult.priority,
+      tags: triageResult.tags,
+      reply,
+    };
+  },
+});
+```
+
+### Parameters
+
+<ParamField path="slug" type="string" required>
+  The unique identifier for this workflow. Used as the route key (`POST /workflows/{slug}`).
+</ParamField>
+
+<ParamField path="input" type="ZodType" required>
+  A Zod schema that validates the workflow's input. The inferred type is passed to your `run` function.
+</ParamField>
+
+<ParamField path="output" type="ZodType" required>
+  A Zod schema for the workflow's return value. The server validates `run`'s return against this schema before storing the result.
+</ParamField>
+
+<ParamField path="run" type="(input, ctx) => Promise<output>">
+  The workflow body. Receives the parsed input and a [`WorkflowRunContext`](#workflowruncontext) as its two arguments. Call actions with `action.run(...)` and agents with `agent.prompt(...)`. Return a value matching the `output` schema.
+</ParamField>
+
+<ParamField path="name" type="string">
+  A human-readable display name for the dashboard and logs.
+</ParamField>
+
+<ParamField path="description" type="string">
+  A short description surfaced in the OpenAPI schema and dashboard.
+</ParamField>
+
+<ParamField path="sandbox" type="SandboxDefinition">
+  A sandbox layout created with `defineSandbox`. When a sandbox is attached to a workflow, Keystroke materializes the files under `runs/{runId}/` before `run` executes. The sandbox's `root` is available on `ctx.sandbox.root`. See [Sandboxes](/concepts/sandboxes) for details.
+</ParamField>
+
+---
+
+## WorkflowRunContext
+
+Your `run` function receives a `ctx` object as its second argument. You can use it to access runtime metadata and to drive durable behaviors like sleeping and hooking.
+
+<ParamField path="ctx.runId" type="string">
+  The unique ID for this workflow run. Stable across replays — use it for correlation IDs, log tagging, or as a key in external systems.
+</ParamField>
+
+<ParamField path="ctx.sleep" type="(duration: number | string | Date) => Promise<void>">
+  Durably suspend the run for a fixed duration or until a specific `Date`. The run is checkpointed before sleeping and resumed automatically. Accepts milliseconds, a duration string (e.g. `"5m"`, `"2h"`), or a `Date`.
+
+  ```typescript
+  async run(input, ctx) {
+    await doFirstStep.run(input);
+    await ctx.sleep("10m"); // suspend for 10 minutes
+    await doSecondStep.run(input);
+  }
+  ```
+</ParamField>
+
+<ParamField path="ctx.hook" type="(options?) => HookHandle">
+  Create a resume token and suspend the run until it is resumed externally. Returns a `HookHandle` with a `token` and `resumeUrl`. Use this to pause a workflow and wait for a human decision or an external webhook callback.
+
+  ```typescript
+  async run(input, ctx) {
+    const handle = ctx.hook({ schema: z.object({ approved: z.boolean() }) });
+    await notifyReviewer({ resumeUrl: handle.resumeUrl });
+    const { approved } = await handle;
+    if (!approved) return { status: "rejected" };
+    // continue...
+  }
+  ```
+</ParamField>
+
+<ParamField path="ctx.sandbox" type="{ root: string } | undefined">
+  Present when the workflow has a `sandbox` attached. `ctx.sandbox.root` is the absolute path to the materialized workspace directory for this run.
+</ParamField>
+
+<ParamField path="ctx.trigger" type="'api' | 'cron' | 'webhook' | 'poll' | 'retry'">
+  How this run was started. Useful for branching logic or logging.
+</ParamField>
+
+<ParamField path="ctx.triggeredAt" type="Date">
+  The timestamp when this run was queued.
+</ParamField>
+
+---
+
+## Invoking a workflow over HTTP
+
+Once the server is running, call any workflow at `POST /workflows/{slug}` with a JSON body that matches the workflow's `input` schema.
+
+```bash
+curl -X POST http://localhost:3000/workflows/incoming-message \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "My invoice is wrong",
+    "sender": "alice@example.com",
+    "channel": "email"
+  }'
+```
+
+<Note>
+  Workflows that run quickly return `200 OK` with the output inline. Longer-running workflows are queued and return `202 Accepted` with a `runId` you can poll for status. The behavior depends on server configuration.
+</Note>
+
+---
+
+## Durable execution
+
+Every `action.run()` and `agent.prompt()` call inside a workflow `run` is a **durable step**. When a step completes, its output is recorded. If the run is interrupted — by a crash, a sleep, or a hook — and later resumed, the engine fast-forwards through already-completed steps, returning their cached outputs without re-executing them.
+
+This means:
+
+- **Steps are idempotent by default.** Re-running a failed workflow from the server will not call your API twice for a step that already succeeded.
+- **Sleep and hooks are safe.** You can `await ctx.sleep("1d")` and the worker process can restart freely during that window; the run resumes from the correct point.
+- **Side effects in `run` outside of steps are not tracked.** Put any work that produces side effects (API calls, file writes) inside an `action.run()` call so it is recorded as a durable step.
+
+<Tip>
+  Keep orchestration logic (branching, looping, sequencing) in the workflow `run` function, and put the actual work in actions. This separation makes your workflows easy to test and reason about under replay.
+</Tip>

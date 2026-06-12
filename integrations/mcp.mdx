@@ -1,0 +1,192 @@
+---
+title: "MCP Servers: Add Any Tool to Keystroke Agents"
+sidebarTitle: "MCP"
+description: "Keystroke has first-class MCP support. Connect any MCP server to your agents over HTTP or stdio to extend them with external tools and data sources."
+---
+
+The [Model Context Protocol](https://modelcontextprotocol.io/) is an open standard that lets AI models talk to external tool servers through a common interface. Keystroke has first-class MCP support: you describe a server with `defineMcp`, drop it into an agent's `tools` array, and the framework handles the connection, tool discovery, and call routing — whether the server is a remote HTTPS endpoint or a local subprocess.
+
+## `defineMcp`
+
+`defineMcp` is the primitive for declaring an MCP server connection. Import it from `@keystrokehq/mcp` (or from `@keystrokehq/agent`, which re-exports it).
+
+```ts
+import { defineMcp } from "@keystrokehq/mcp";
+
+const myServer = defineMcp({
+  key: "my-server",
+  transport: { type: "http", url: "https://my-mcp-server.example.com/mcp" },
+});
+```
+
+### Parameters
+
+<ParamField body="key" type="string" required>
+  A unique identifier for this server definition. Used to namespace tool names in the form `mcp__{key}__{toolName}`. Must be non-empty.
+</ParamField>
+
+<ParamField body="transport" type="object" required>
+  The connection transport. Either an HTTP transport (`{ type: "http", url }`) or a stdio transport (`{ type: "stdio", command, args? }`).
+</ParamField>
+
+<ParamField body="name" type="string">
+  A human-readable display name for the server (optional).
+</ParamField>
+
+<ParamField body="credentials" type="array">
+  An array of credential definitions the server needs. When present, you must also provide an `auth` function.
+</ParamField>
+
+<ParamField body="auth" type="function">
+  A function `(resolvedCredentials) => McpAuthOptions` that maps credential values to HTTP headers, query parameters, or environment variables. Required when `credentials` is set.
+</ParamField>
+
+<ParamField body="declaredTools" type="array">
+  Static tool metadata for the server. When provided, Keystroke can display and reason about the tools before opening the connection — the live connection is only opened when a tool is actually called.
+</ParamField>
+
+## Connecting over HTTP
+
+For servers that expose an HTTP endpoint, set `transport.type` to `"http"` and provide the URL. Keystroke uses the [MCP Streamable HTTP transport](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http) by default and falls back to SSE for legacy servers.
+
+```ts src/agents/wiki-agent.ts
+import { defineAgent } from "@keystrokehq/keystroke/agent";
+import { defineMcp } from "@keystrokehq/mcp";
+
+const deepwiki = defineMcp({
+  key: "deepwiki",
+  transport: {
+    type: "http",
+    url: "https://mcp.deepwiki.com/mcp",
+  },
+});
+
+export default defineAgent({
+  slug: "wiki-agent",
+  systemPrompt: "You can answer questions about public GitHub repositories using DeepWiki.",
+  model: "anthropic/claude-sonnet-4-6",
+  tools: [deepwiki],
+});
+```
+
+When the agent runs, Keystroke connects to the MCP server, lists its tools, and adds them to the model's tool set. Tool names are prefixed in the form `mcp__deepwiki__ask_question`.
+
+## Connecting over stdio
+
+For local servers — CLI tools, Docker-based MCP servers, or SDKs that spawn a subprocess — set `transport.type` to `"stdio"` and provide the `command` to run.
+
+```ts src/agents/filesystem-agent.ts
+import { defineAgent } from "@keystrokehq/keystroke/agent";
+import { defineMcp } from "@keystrokehq/mcp";
+
+const filesystem = defineMcp({
+  key: "filesystem",
+  transport: {
+    type: "stdio",
+    command: "npx",
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/home/user/documents"],
+  },
+});
+
+export default defineAgent({
+  slug: "filesystem-agent",
+  systemPrompt: "You can read and write files in the user's documents folder.",
+  model: "openai/gpt-4o",
+  tools: [filesystem],
+});
+```
+
+<Warning>
+  stdio MCP servers spawn a new subprocess each time an agent session starts. For servers with meaningful startup latency, prefer HTTP-based MCP servers when possible.
+</Warning>
+
+## Credential-aware MCP
+
+When an MCP server requires authentication, declare the credentials it needs and provide an `auth` function that maps the resolved values to request options. Keystroke fetches the credential values from the vault and calls `auth` at the start of each agent session.
+
+```ts src/agents/search-agent.ts
+import { defineAgent } from "@keystrokehq/keystroke/agent";
+import { defineMcp } from "@keystrokehq/mcp";
+import { exaCredential } from "@keystrokehq/exa";
+
+const exaServer = defineMcp({
+  key: "exa",
+  transport: { type: "http", url: "https://mcp.exa.ai/mcp" },
+  credentials: [exaCredential],
+  auth: (credentials) => ({
+    headers: { "x-api-key": credentials.exa.apiKey },
+  }),
+});
+
+export default defineAgent({
+  slug: "search-agent",
+  systemPrompt: "You can search the web using Exa.",
+  model: "openai/gpt-4o",
+  tools: [exaServer],
+});
+```
+
+The `auth` function can return any combination of `headers`, `searchParams`, and `env` (for stdio servers). For the Exa and other pre-built integrations, the credential-aware MCP definitions are already exported — you don't need to write this yourself.
+
+## Using MCP in an agent
+
+Place any `McpDefinition` value anywhere in an agent's `tools` array. You can mix actions and MCP servers freely:
+
+```ts
+import { defineAgent } from "@keystrokehq/keystroke/agent";
+import { defineMcp } from "@keystrokehq/mcp";
+import { sendEmail } from "@keystrokehq/google/gmail/actions";
+
+const github = defineMcp({
+  key: "github",
+  transport: { type: "http", url: "https://api.githubcopilot.com/mcp" },
+});
+
+export default defineAgent({
+  slug: "dev-assistant",
+  systemPrompt: "You can read GitHub issues and send email summaries.",
+  model: "anthropic/claude-sonnet-4-6",
+  tools: [github, sendEmail],
+});
+```
+
+Keystroke connects to all MCP servers listed in `tools` at the start of each agent session and closes all connections when the session ends.
+
+## Calling an MCP server from an action
+
+If you need one-off MCP access outside of an agent session — for example, inside a workflow action — use `connectMcpServer` directly:
+
+```ts
+import { connectMcpServer } from "@keystrokehq/mcp";
+
+const conn = await connectMcpServer("deepwiki", {
+  url: "https://mcp.deepwiki.com/mcp",
+});
+
+const result = await conn.callTool("ask_question", {
+  repoName: "withastro/astro",
+  question: "How does routing work?",
+});
+
+await conn.close();
+```
+
+`callTool` accepts either the original MCP tool name (`ask_question`) or the prefixed agent name (`mcp__deepwiki__ask_question`).
+
+## Popular MCP servers
+
+The following servers work out of the box with `defineMcp`:
+
+| Server | Transport | URL |
+|--------|-----------|-----|
+| [DeepWiki](https://deepwiki.com) — GitHub repo Q&A | HTTP | `https://mcp.deepwiki.com/mcp` |
+| [Exa Search](https://exa.ai/docs/reference/exa-mcp) — web search | HTTP | `https://mcp.exa.ai/mcp` |
+| [Exa Websets](https://exa.ai/docs/reference/websets-mcp) — curated collections | HTTP | `https://websetsmcp.exa.ai/mcp` |
+| [Filesystem](https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem) — local file access | stdio | `npx -y @modelcontextprotocol/server-filesystem <path>` |
+| [GitHub](https://github.com/github/github-mcp-server) — issues, PRs, repos | HTTP | Requires auth |
+| [Brave Search](https://github.com/modelcontextprotocol/servers/tree/main/src/brave-search) — web search | stdio | Requires `BRAVE_API_KEY` in env |
+| [Puppeteer](https://github.com/modelcontextprotocol/servers/tree/main/src/puppeteer) — browser automation | stdio | `npx -y @modelcontextprotocol/server-puppeteer` |
+
+<Note>
+  `@keystrokehq/mcp` is the low-level primitive package. It has no dependencies on the Keystroke agent runtime, server, or credential registry. This means you can use it in standalone scripts or actions that don't run inside a full Keystroke server.
+</Note>

@@ -1,0 +1,174 @@
+---
+title: "Actions: Reusable Typed Steps for Workflows and Agents"
+sidebarTitle: "Actions"
+description: "Actions are the atomic building blocks of Keystroke. Define typed inputs and outputs, then reuse the same action in workflows as steps or in agents as tools."
+---
+
+Actions are the smallest composable unit in Keystroke. Each action is a typed, named function with a Zod input schema, a Zod output schema, and a `run` implementation. You define an action once and use it in two places without any conversion: as a durable step inside a workflow, or as a callable tool given to an agent. There is no separate "workflow step" type and "agent tool" type — the same `defineAction` export works in both contexts.
+
+## Defining an action
+
+Export a named action from any file under `src/actions/`. The server makes action definitions available for use in workflows and agents in the same project.
+
+```typescript
+import { defineAction } from "@keystrokehq/keystroke/action";
+import { z } from "zod";
+
+export const TriageInput = z.object({
+  message: z.string(),
+  sender: z.string(),
+  channel: z.enum(["email", "chat", "sms"]).default("email"),
+});
+
+export const TriageOutput = z.object({
+  priority: z.enum(["low", "normal", "high", "urgent"]),
+  tags: z.array(z.string()),
+  needsHuman: z.boolean(),
+});
+
+export const triage = defineAction({
+  slug: "triage",
+  name: "Triage",
+  input: TriageInput,
+  output: TriageOutput,
+  run: async (input) => {
+    console.info("triage: evaluating message", { sender: input.sender, channel: input.channel });
+    const urgent = /urgent|asap|immediately/i.test(input.message);
+    const billing = /invoice|billing|refund/i.test(input.message);
+
+    return TriageOutput.parse({
+      priority: urgent ? "urgent" : billing ? "high" : "normal",
+      tags: billing ? ["billing"] : [],
+      needsHuman: urgent,
+    });
+  },
+});
+```
+
+### Parameters
+
+<ParamField path="slug" type="string" required>
+  A unique identifier for the action. Used as the step key in the workflow run record and as the tool name presented to the model.
+</ParamField>
+
+<ParamField path="name" type="string" required>
+  A human-readable name shown in the dashboard, logs, and in the tool description presented to the LLM when the action is used as an agent tool.
+</ParamField>
+
+<ParamField path="input" type="ZodType" required>
+  A Zod schema that validates the action's input. The inferred type is the argument type of your `run` function.
+</ParamField>
+
+<ParamField path="output" type="ZodType" required>
+  A Zod schema for the action's return value. Keystroke validates `run`'s return against this schema when the action is executed as a workflow step.
+</ParamField>
+
+<ParamField path="run" type="(input) => Promise<output>" required>
+  The action implementation. Receives validated input and must return a value matching the `output` schema. Can be `async`.
+</ParamField>
+
+<ParamField path="credentials" type="CredentialList">
+  An optional list of credential requirements. When the action runs inside a workflow, the server resolves these secrets from the credential vault and injects them alongside the input. Define credential requirements using the `credential` helper:
+
+  ```typescript
+  import { defineAction, credential } from "@keystrokehq/keystroke/action";
+
+  export const sendEmail = defineAction({
+    slug: "send-email",
+    name: "Send Email",
+    credentials: [credential.static("SMTP_API_KEY")],
+    input: z.object({ to: z.string(), body: z.string() }),
+    output: z.object({ messageId: z.string() }),
+    run: async (input, { SMTP_API_KEY }) => {
+      // SMTP_API_KEY is resolved and injected at runtime
+    },
+  });
+  ```
+</ParamField>
+
+---
+
+## Using actions in workflows
+
+Call `action.run(input)` directly inside a workflow's `run` function. The call is automatically recorded as a durable step — if the workflow is replayed, completed steps are skipped and their cached outputs are returned.
+
+```typescript
+import { defineWorkflow } from "@keystrokehq/keystroke/workflow";
+import { z } from "zod";
+import { triage } from "../actions/triage";
+import { pickAssignee } from "../actions/pick-assignee";
+
+export default defineWorkflow({
+  slug: "route-ticket",
+  input: z.object({ message: z.string(), sender: z.string() }),
+  output: z.object({ assignee: z.string() }),
+  async run(input) {
+    const triageResult = await triage.run({
+      message: input.message,
+      sender: input.sender,
+      channel: "email",
+    });
+
+    const { assignee } = await pickAssignee.run({
+      channel: "email",
+      triage: triageResult,
+    });
+
+    return { assignee };
+  },
+});
+```
+
+Steps run sequentially in the order you `await` them. You can branch, loop, and compose steps freely — the workflow runtime tracks each call by its slug and occurrence order.
+
+---
+
+## Using actions as agent tools
+
+Pass any action directly into an agent's `tools` array. Keystroke wraps the action's `run` function and Zod schemas into a tool description that the model can call during a conversation.
+
+```typescript
+import { defineAgent } from "@keystrokehq/keystroke/agent";
+import { triage } from "../actions/triage";
+import { searchDocs } from "../actions/search-docs";
+
+export default defineAgent({
+  slug: "support",
+  systemPrompt: "You are a support agent. Triage messages and search docs when needed.",
+  model: "anthropic/claude-sonnet-4-5",
+  tools: [triage, searchDocs],
+});
+```
+
+The model sees the action's `name` and input schema as the tool definition. When the model calls the tool, Keystroke validates the arguments against the action's `input` schema, calls `run`, validates the result against `output`, and returns the result to the model.
+
+<Note>
+  The same `triage` action works identically whether called from a workflow step or invoked by an agent as a tool — there is no wrapper, adapter, or separate definition needed.
+</Note>
+
+---
+
+## Composition guidelines
+
+<Warning>
+  Actions should not call other actions directly inside their `run` function. Compose actions sequentially in a workflow instead — this keeps steps individually durable and easy to observe in the run log.
+</Warning>
+
+The right pattern is:
+
+```typescript
+// ✅ Compose in the workflow
+async run(input) {
+  const a = await stepOne.run(input);
+  const b = await stepTwo.run(a);
+  return b;
+}
+
+// ❌ Don't nest actions inside actions
+run: async (input) => {
+  const a = await stepOne.run(input); // hidden step, not tracked
+  return stepTwo.run(a);
+}
+```
+
+Keep each action focused on a single responsibility. Put branching, sequencing, and error handling in the workflow `run` function, and put API calls, data transforms, and side effects in actions.

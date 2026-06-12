@@ -1,0 +1,163 @@
+---
+title: "Keystroke Skills and Files: Guiding Agent Behavior"
+sidebarTitle: "Skills & Files"
+description: "Skills are Markdown playbooks injected into agent context. Files are static documents pre-loaded into the workspace. Use both to shape how agents respond."
+---
+
+Keystroke gives you two mechanisms to put context into an agent's hands: **skills** and **files**. Skills are Markdown playbooks that get injected into the agent's system context before every conversation — they set behavioral rules, policies, and instructions. Files are documents placed in the agent's workspace directory so the agent can read them during a run, like a support script or a product reference guide. They serve different purposes and are loaded in different ways.
+
+## Skills
+
+### What a skill is
+
+A skill is a `SKILL.md` file stored in `src/skills/{name}/`. Each subdirectory is one skill, named by the folder. Skills contain plain Markdown — instructions, policies, tone guidelines, escalation rules, or anything else you want the agent to follow consistently.
+
+```
+src/
+  skills/
+    support/
+      SKILL.md
+    research/
+      SKILL.md
+```
+
+When an agent has a skill attached, Keystroke injects the contents of its `SKILL.md` into the agent's workspace under `.agents/skills/{name}/SKILL.md`, and your system prompt can reference it explicitly.
+
+### SKILL.md format
+
+A skill file can have an optional YAML front matter block with `name` and `description` fields, followed by the Markdown body:
+
+```md
+---
+name: support
+description: Support playbook for product questions and refund policy.
+---
+
+# Support skill
+
+Read this skill when answering customer support questions.
+
+Follow the refund policy in the product guide and keep replies concise.
+```
+
+The body is where you write the actual guidance. There is no required structure for the body — write whatever the agent needs to know. Good candidates include:
+
+- **Tone and style rules** — formal or casual, concise or detailed
+- **Decision trees** — when to escalate, when to refund, when to ask a clarifying question
+- **Prohibited actions** — things the agent must never do
+- **Domain knowledge summaries** — condensed facts the agent should always have
+
+### Attaching skills to an agent
+
+Add the `skills` array to `defineAgent` and list skill names (folder names, not file paths):
+
+```ts
+// src/agents/support.ts
+import { defineAgent } from "@keystrokehq/keystroke/agent";
+
+export default defineAgent({
+  slug: "support",
+  name: "Support",
+  description: "Answers product questions using bundled docs and the support skill.",
+  systemPrompt:
+    "You are helpful support. Read /workspace/support-instructions.md and " +
+    "/workspace/product-guide.md before answering. " +
+    "Skills live under /workspace/.agents/skills/.",
+  model: "anthropic/claude-sonnet-4.6",
+  skills: ["support"],
+  files: true,
+});
+```
+
+You can attach multiple skills to one agent:
+
+```ts
+skills: ["support", "refund-policy", "escalation"]
+```
+
+<Note>
+  Skills are injected at build time into the virtual `@keystrokehq/assets` module and resolved into the agent's workspace at runtime. Your system prompt should tell the agent where to look — e.g. `Skills live under /workspace/.agents/skills/`.
+</Note>
+
+---
+
+## Files
+
+### What files are
+
+Files are static documents you want available in the agent's workspace during every run. Place them in `src/files/{agentSlug}/` — the folder name must match the agent's `slug`. When the agent runs, Keystroke pre-loads those files into the workspace root so the agent can read them as ordinary files.
+
+```
+src/
+  files/
+    support/
+      product-guide.md
+      support-instructions.md
+      context/
+        seed.txt
+```
+
+For the `support` agent (with `slug: "support"`), each of these files would be available at `/workspace/product-guide.md`, `/workspace/support-instructions.md`, and `/workspace/context/seed.txt` during a run.
+
+### Enabling files on an agent
+
+Set `files: true` on `defineAgent`:
+
+```ts
+export default defineAgent({
+  slug: "support",
+  ...
+  files: true,
+});
+```
+
+With `files: true`, everything in `src/files/support/` is copied into the agent's workspace before each run.
+
+### What to put in files
+
+Files are best for **reference material** the agent reads rather than behavioral instructions:
+
+- Product documentation and feature guides
+- Pricing tables and plan comparisons
+- FAQ content
+- Support scripts and canned responses
+- Any structured data (CSV, JSON) the agent needs to query
+
+Here is an example product guide from the reference project:
+
+```md
+# Product guide
+
+## Plans
+
+- **Starter** — single workspace, email support.
+- **Pro** — automations, priority support.
+
+## Refunds
+
+Refunds within 14 days for annual plans. Contact support with the account email.
+```
+
+The agent can read this file via its bash sandbox or by referencing the path in its reasoning. If your system prompt explicitly directs the agent to read specific files first, it will consistently do so.
+
+<Tip>
+  Point the agent toward its files in the system prompt. For example: `"Read /workspace/product-guide.md before answering any question about plans or pricing."` Without an explicit instruction, the agent may or may not choose to read the file on its own.
+</Tip>
+
+---
+
+## Skills vs files: when to use each
+
+Both skills and files provide context to agents, but they work differently and serve different purposes:
+
+| | **Skills** | **Files** |
+|---|---|---|
+| **Where they live** | `src/skills/{name}/SKILL.md` | `src/files/{agentSlug}/...` |
+| **Loaded into** | Agent workspace under `.agents/skills/` | Agent workspace root |
+| **Content type** | Behavioral instructions and policies | Reference documents and data |
+| **Attached via** | `skills: ['name']` on `defineAgent` | `files: true` on `defineAgent` |
+| **Best for** | How the agent should act | What the agent should know |
+
+Use **skills** when you want to shape the agent's behavior — rules it should always follow, policies it should apply, and reasoning patterns it should use.
+
+Use **files** when you want to give the agent reference material it can consult — product documentation, pricing information, lookup tables, and scripts it reads on demand.

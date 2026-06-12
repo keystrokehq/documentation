@@ -1,0 +1,155 @@
+{
+  "projectType": "framework",
+  "projectName": "Keystroke",
+  "projectDescription": "A meta-framework for building AI agents, workflows, and triggers — comparable to how Next.js wraps React, Keystroke provides conventions, a CLI, and a runtime so you can focus on writing agent logic.",
+  "theme": "luma",
+  "primaryColor": "#040404",
+  "lightColor": null,
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/agents",
+              "concepts/workflows",
+              "concepts/actions",
+              "concepts/triggers",
+              "concepts/sandboxes"
+            ]
+          },
+          {
+            "group": "Building",
+            "pages": [
+              "building/project-structure",
+              "building/configuration",
+              "building/credentials",
+              "building/skills-and-files"
+            ]
+          },
+          {
+            "group": "Integrations",
+            "pages": [
+              "integrations/overview",
+              "integrations/slack",
+              "integrations/google",
+              "integrations/exa",
+              "integrations/mcp"
+            ]
+          },
+          {
+            "group": "Deployment",
+            "pages": [
+              "deployment/local-development",
+              "deployment/deploying",
+              "deployment/environment-variables"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "CLI Reference",
+        "groups": [
+          {
+            "group": "CLI",
+            "pages": [
+              "cli/overview",
+              "cli/init",
+              "cli/dev-and-start",
+              "cli/deploy",
+              "cli/agents-and-workflows",
+              "cli/credentials",
+              "cli/auth"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "HTTP API",
+            "pages": [
+              "api/overview",
+              "api/agents",
+              "api/workflows",
+              "api/triggers",
+              "api/credentials",
+              "api/openapi"
+            ]
+          },
+          {
+            "group": "SDK",
+            "pages": [
+              "sdk/overview",
+              "sdk/client",
+              "sdk/typescript-sdk"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "File-based discovery: place files in agents/, workflows/, triggers/, actions/ and routes are auto-mounted",
+    "defineAgent — LLM agents with typed tools, skills, and sandbox workspaces",
+    "defineWorkflow — durable, replayable orchestration of actions and agents",
+    "defineAction — reusable typed steps usable in both workflows and agent tool lists",
+    "Three trigger types: webhook, cron, and poll — attach to any workflow or agent",
+    "Built-in integrations: Slack (gateway + actions), Google (Gmail + Calendar), Exa Search",
+    "MCP (Model Context Protocol) client support via @keystrokehq/mcp",
+    "Credential vault with typed schemas and OAuth provider management",
+    "keystroke CLI: init, dev, start, build, deploy commands",
+    "Typed TypeScript SDK (@keystrokehq/sdk) for calling agents, workflows, and triggers",
+    "OpenAPI spec auto-generated from discovered routes (GET /openapi.json)",
+    "Agent skills: markdown playbooks injected into agent context",
+    "Sandbox workspaces: isolated file environments for agents and workflows",
+    "SQLite by default locally; Postgres for production"
+  ],
+  "publicApiSurface": [
+    "defineAgent({ slug, systemPrompt, model, tools, skills, files, runtimeProvider })",
+    "defineWorkflow({ slug, input, output, run, sandbox })",
+    "defineAction({ slug, name, input, output, credentials, run })",
+    "defineWebhookSource({ key, endpoint, request, filter }).attach({ workflow, transform })",
+    "defineCronSource({ key, schedule }).attach({ workflow })",
+    "definePollSource({ key, run, schedule }).attach({ workflow, transform })",
+    "defineConfig({ integrations, server })",
+    "defineCredential({ key, fields })",
+    "defineSandbox({ files })",
+    "defineMcp({ name, url }) — MCP server definition",
+    "POST /agents/{slug}",
+    "POST /workflows/{slug}",
+    "POST /triggers/{key}",
+    "POST /triggers/{key}/poll",
+    "GET /openapi.json",
+    "createKeystrokeClient({ baseUrl, auth }) — TypeScript SDK",
+    "client.agents.prompt(slug, input)",
+    "client.workflows.run(slug, input)",
+    "client.triggers.webhook(key, payload)",
+    "client.triggers.poll(key)",
+    "client.health.check()",
+    "keystroke init <name>",
+    "keystroke dev",
+    "keystroke start",
+    "keystroke build",
+    "keystroke deploy",
+    "keystroke auth login / logout / status",
+    "keystroke agent <slug> <message>",
+    "keystroke workflow <slug>",
+    "keystroke credentials set / list",
+    "@keystrokehq/google: gmail actions (sendEmail, listEmails, getEmail), calendar actions (listEvents, createEvent, updateEvent, deleteEvent)",
+    "@keystrokehq/slack: postMessage, listMessages, lookupUser, openDm",
+    "@keystrokehq/exa: exa-search, exa-search-structured, exa-get-contents, exa-answer, exa-get-context"
+  ]
+}

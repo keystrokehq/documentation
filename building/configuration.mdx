@@ -1,0 +1,186 @@
+---
+title: "Configuring Your Keystroke Project with defineConfig"
+sidebarTitle: "Configuration"
+description: "Use keystroke.config.ts to register integrations, set execution mode, and tune your project. defineConfig gives you full TypeScript type safety."
+---
+
+Every Keystroke project has a single `keystroke.config.ts` file at its root. This is where you register integration plugins, set how the server handles requests, and optionally point at a specific database. The `defineConfig` helper wraps your options in a typed `KeystrokeConfig` object so TypeScript can catch mistakes before you run anything.
+
+## Config file location
+
+Place `keystroke.config.ts` at the root of your project, next to `package.json`:
+
+```
+my-project/
+  keystroke.config.ts   ← here
+  package.json
+  src/
+    agents/
+    workflows/
+    ...
+```
+
+Keystroke reads this file at build time and at server startup. If the file is missing, the server starts with no integrations registered and default settings.
+
+## Basic shape
+
+```ts
+// keystroke.config.ts
+import { defineConfig } from "@keystrokehq/keystroke/config";
+import { slack } from "@keystrokehq/slack";
+import { google } from "@keystrokehq/google";
+
+export default defineConfig({
+  integrations: [slack(), google()],
+  server: {
+    executionMode: "inline",
+  },
+});
+```
+
+## `defineConfig` options
+
+<ParamField body="integrations" type="IntegrationPlugin[]">
+  An array of integration plugin factories. Each plugin registers OAuth routes, credential schemas, and integration-specific actions. Order does not matter.
+
+  ```ts
+  integrations: [slack(), google()]
+  ```
+</ParamField>
+
+<ParamField body="server" type="object">
+  Optional server-level settings.
+
+  <ParamField body="server.executionMode" type='"inline" | "queued"' default='"inline"'>
+    Controls how the server handles long-running requests.
+
+    - **`"inline"`** — the HTTP response waits for the workflow or agent to finish. Use this during development and for short operations.
+    - **`"queued"`** — the server accepts the request immediately and returns HTTP `202 Accepted`. The workflow or agent runs in the background via the job queue. Use this for production workflows that may run for more than a few seconds.
+  </ParamField>
+
+  <ParamField body="server.database" type="object">
+    Optional database configuration. When omitted, Keystroke defaults to SQLite at `file:./data/dev.db` — no setup required for local development.
+
+    <ParamField body="server.database.url" type="string">
+      A database connection URL. Use `file:./data/dev.db` for SQLite or a Postgres connection string (`postgresql://user:pass@host:5432/dbname`) for production.
+    </ParamField>
+  </ParamField>
+</ParamField>
+
+<ParamField body="dirs" type="object">
+  Override the default `src/` subdirectory paths for module discovery. Rarely needed — see [Project Structure](/building/project-structure) for details.
+</ParamField>
+
+## Integration plugins
+
+Integrations are optional packages that add OAuth flows, credential types, and pre-built actions to your project. You register them in `integrations` and they mount their own routes (e.g. `/oauth/slack/callback`) when the server starts.
+
+<Tabs>
+  <Tab title="Slack + Google">
+    ```ts
+    import { defineConfig } from "@keystrokehq/keystroke/config";
+    import { slack } from "@keystrokehq/slack";
+    import { google } from "@keystrokehq/google";
+
+    export default defineConfig({
+      integrations: [slack(), google()],
+    });
+    ```
+
+    Add the corresponding environment variables to your `.env`:
+
+    ```bash
+    # Slack
+    SLACK_CLIENT_ID=
+    SLACK_CLIENT_SECRET=
+    SLACK_SIGNING_SECRET=
+
+    # Google OAuth
+    GOOGLE_CLIENT_ID=
+    GOOGLE_CLIENT_SECRET=
+    ```
+  </Tab>
+  <Tab title="Slack only">
+    ```ts
+    import { defineConfig } from "@keystrokehq/keystroke/config";
+    import { slack } from "@keystrokehq/slack";
+
+    export default defineConfig({
+      integrations: [slack()],
+    });
+    ```
+  </Tab>
+  <Tab title="No integrations">
+    ```ts
+    import { defineConfig } from "@keystrokehq/keystroke/config";
+
+    export default defineConfig({});
+    ```
+
+    `integrations` defaults to an empty array. You can still use static API key credentials and custom actions without any integration plugins.
+  </Tab>
+</Tabs>
+
+<Note>
+  Integration plugins like `slack()` and `google()` are **config-level plugins** — they register OAuth routes and platform services. VM sandbox runtimes (e.g. Microsandbox) are **agent-level plugins** and attach via `runtimeProvider` on `defineAgent`, not here.
+</Note>
+
+## Execution mode
+
+The `server.executionMode` setting controls the trade-off between response latency and reliability:
+
+<Tabs>
+  <Tab title="inline (default)">
+    ```ts
+    export default defineConfig({
+      server: { executionMode: "inline" },
+    });
+    ```
+
+    The HTTP connection stays open until the run completes. Simple to reason about. Suitable for agents and workflows that finish in a few seconds. Avoid for long-running operations in production — the connection may time out.
+  </Tab>
+  <Tab title="queued">
+    ```ts
+    export default defineConfig({
+      server: { executionMode: "queued" },
+    });
+    ```
+
+    The server returns `202 Accepted` immediately with a `runId`. The run executes in the background. Poll for results using `GET /workflows/{slug}/runs/{runId}` or use the CLI:
+
+    ```bash
+    keystroke workflow runs get signup-pipeline <run-id> --include steps
+    ```
+  </Tab>
+</Tabs>
+
+## Database configuration
+
+Local development uses SQLite automatically — no configuration needed. For production or when you need Postgres, set `DATABASE_URL` in your environment or configure it explicitly:
+
+<CodeGroup>
+```ts SQLite (default)
+export default defineConfig({
+  server: {
+    database: { url: "file:./data/dev.db" },
+  },
+});
+```
+
+```ts Postgres
+export default defineConfig({
+  server: {
+    database: { url: "postgresql://user:pass@localhost:5432/keystroke" },
+  },
+});
+```
+
+```bash Environment variable
+# .env
+DATABASE_URL=postgresql://user:pass@localhost:5432/keystroke
+```
+</CodeGroup>
+
+<Tip>
+  You get full TypeScript autocompletion on all `defineConfig` options in any editor that supports the TypeScript language server. Hover over a field to see its type and documentation inline.
+</Tip>
